@@ -19,15 +19,15 @@
         <section id="user-panel" class="panel hidden">
           <div class="panel-header">
             <h2>当前用户</h2>
-            <button id="logout-btn" class="ghost-btn">退出</button>
+            <button id="logout-btn" class="ghost-btn" type="button">退出登录</button>
           </div>
-          <div id="user-summary" class="user-summary"></div>
+          <div id="user-summary"></div>
         </section>
 
         <section id="contacts-panel" class="panel hidden">
           <div class="panel-header">
             <h2>联系人</h2>
-            <button id="refresh-contacts-btn" class="ghost-btn">刷新</button>
+            <button id="refresh-contacts-btn" class="ghost-btn" type="button">刷新</button>
           </div>
           <div id="contacts-list" class="list"></div>
         </section>
@@ -35,7 +35,7 @@
         <section id="admin-panel" class="panel hidden">
           <div class="panel-header">
             <h2>邀请码</h2>
-            <button id="create-invite-btn" class="ghost-btn">生成</button>
+            <button id="create-invite-btn" class="ghost-btn" type="button">生成</button>
           </div>
           <div id="invite-list" class="list"></div>
         </section>
@@ -47,7 +47,7 @@
             <h2>会话</h2>
             <p id="connection-status">未连接</p>
           </div>
-          <button id="create-group-btn" class="primary-btn hidden">创建群聊</button>
+          <button id="create-group-btn" class="primary-btn hidden" type="button">创建群聊</button>
         </header>
 
         <section class="content">
@@ -63,9 +63,12 @@
 
             <div id="chat-panel" class="chat-panel hidden">
               <div class="chat-header">
-                <div>
-                  <h3 id="chat-title">会话</h3>
-                  <p id="chat-meta"></p>
+                <div class="chat-title-wrap">
+                  <div id="chat-avatar"></div>
+                  <div>
+                    <h3 id="chat-title">会话</h3>
+                    <p id="chat-meta"></p>
+                  </div>
                 </div>
               </div>
 
@@ -73,7 +76,7 @@
 
               <form id="message-form" class="composer">
                 <input id="message-input" type="text" placeholder="输入消息" autocomplete="off" />
-                <label class="file-btn">
+                <label class="file-btn" for="image-input">
                   图片
                   <input id="image-input" type="file" accept="image/*" hidden />
                 </label>
@@ -89,17 +92,17 @@
       <form method="dialog" id="group-form" class="dialog-form">
         <div class="panel-header">
           <h3>创建群聊</h3>
-          <button class="ghost-btn" value="cancel">关闭</button>
+          <button class="ghost-btn" type="button" id="close-group-btn">关闭</button>
         </div>
-        <label>
-          群名称
+        <label class="stack">
+          <span>群名称</span>
           <input id="group-name-input" type="text" required />
         </label>
-        <div>
-          <p>选择成员</p>
+        <div class="stack">
+          <span>选择成员</span>
           <div id="group-member-list" class="list compact-list"></div>
         </div>
-        <button type="submit" class="primary-btn">创建</button>
+        <button type="submit" class="primary-btn">创建群聊</button>
       </form>
     </dialog>
 

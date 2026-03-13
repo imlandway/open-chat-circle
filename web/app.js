@@ -19,6 +19,7 @@ const emptyState = document.querySelector('#empty-state');
 const chatPanel = document.querySelector('#chat-panel');
 const chatTitle = document.querySelector('#chat-title');
 const chatMeta = document.querySelector('#chat-meta');
+const chatAvatar = document.querySelector('#chat-avatar');
 const userSummary = document.querySelector('#user-summary');
 const contactsList = document.querySelector('#contacts-list');
 const inviteList = document.querySelector('#invite-list');
@@ -35,13 +36,12 @@ const groupDialog = document.querySelector('#group-dialog');
 const groupForm = document.querySelector('#group-form');
 const groupNameInput = document.querySelector('#group-name-input');
 const groupMemberList = document.querySelector('#group-member-list');
-const rememberedCredentials = loadRememberedCredentials();
+const closeGroupBtn = document.querySelector('#close-group-btn');
 
 boot();
 
 function boot() {
-  renderAuthPanel('login');
-  wireEvents();
+  wireStaticEvents();
 
   if (state.session?.sessionToken) {
     hydrateApp().catch((error) => {
@@ -54,7 +54,7 @@ function boot() {
   render();
 }
 
-function wireEvents() {
+function wireStaticEvents() {
   logoutBtn.addEventListener('click', () => {
     resetToLoggedOut();
   });
@@ -82,6 +82,10 @@ function wireEvents() {
   createGroupBtn.addEventListener('click', () => {
     renderGroupMembers();
     groupDialog.showModal();
+  });
+
+  closeGroupBtn.addEventListener('click', () => {
+    groupDialog.close();
   });
 
   groupForm.addEventListener('submit', async (event) => {
@@ -117,6 +121,7 @@ function wireEvents() {
       return;
     }
 
+    const submittedAt = Date.now();
     messageInput.value = '';
 
     try {
@@ -129,6 +134,12 @@ function wireEvents() {
       });
       await refreshActiveConversation();
     } catch (error) {
+      await refreshActiveConversation();
+      if (didMessagePersist({ type: 'text', text, submittedAt })) {
+        showToast('消息已发送，界面已自动刷新');
+        return;
+      }
+      messageInput.value = text;
       handleError(error);
     }
   });
@@ -140,17 +151,7 @@ function wireEvents() {
     }
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const upload = await fetch('/api/uploads/images', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${state.session.sessionToken}`,
-        },
-        body: formData,
-      }).then(readJson);
-
+      const upload = await uploadImage(file);
       await api(`/api/conversations/${state.activeConversation.id}/messages`, {
         method: 'POST',
         body: {
@@ -159,10 +160,16 @@ function wireEvents() {
           imageName: upload.name,
         },
       });
-      imageInput.value = '';
       await refreshActiveConversation();
     } catch (error) {
-      handleError(error);
+      await refreshActiveConversation();
+      if (didMessagePersist({ type: 'image', imageName: file.name, submittedAt: Date.now() - 1000 })) {
+        showToast('图片已发送，界面已自动刷新');
+      } else {
+        handleError(error);
+      }
+    } finally {
+      imageInput.value = '';
     }
   });
 }
@@ -176,7 +183,6 @@ function resetToLoggedOut() {
   state.messages = [];
   state.activeConversation = null;
   saveSession(null);
-  renderAuthPanel('login');
   render();
 }
 
@@ -232,7 +238,7 @@ async function hydrateConversations() {
     const next = state.conversations.find((item) => item.id === state.activeConversation.id);
     if (next) {
       state.activeConversation = next;
-      await loadMessages(next.id);
+      await loadMessages(next.id, { markAsRead: false });
     } else {
       state.activeConversation = null;
       state.messages = [];
@@ -249,24 +255,37 @@ async function selectConversation(conversationId) {
   }
 
   state.activeConversation = conversation;
-  await loadMessages(conversation.id);
+  await loadMessages(conversation.id, { markAsRead: true });
   render();
 }
 
-async function loadMessages(conversationId) {
+async function loadMessages(conversationId, options = { markAsRead: true }) {
   const response = await api(`/api/conversations/${conversationId}/messages`);
   state.messages = response.messages;
 
+  if (!options.markAsRead) {
+    return;
+  }
+
   const lastMessage = state.messages.at(-1);
-  if (lastMessage) {
-    try {
-      await api(`/api/conversations/${conversationId}/read`, {
-        method: 'POST',
-        body: { messageId: lastMessage.id },
-      });
-    } catch (error) {
-      console.error('Failed to mark conversation as read.', error);
+  if (!lastMessage) {
+    return;
+  }
+
+  try {
+    await api(`/api/conversations/${conversationId}/read`, {
+      method: 'POST',
+      body: { messageId: lastMessage.id },
+    });
+    const conversation = state.conversations.find((item) => item.id === conversationId);
+    if (conversation) {
+      conversation.unreadCount = 0;
     }
+    if (state.activeConversation?.id === conversationId) {
+      state.activeConversation.unreadCount = 0;
+    }
+  } catch (error) {
+    console.error('Failed to mark conversation as read.', error);
   }
 }
 
@@ -276,7 +295,7 @@ async function refreshActiveConversation() {
   }
 
   await hydrateConversations();
-  await loadMessages(state.activeConversation.id);
+  await loadMessages(state.activeConversation.id, { markAsRead: false });
   render();
 }
 
@@ -289,7 +308,7 @@ function startPollingFallback() {
     try {
       await hydrateConversations();
       if (state.activeConversation) {
-        await loadMessages(state.activeConversation.id);
+        await loadMessages(state.activeConversation.id, { markAsRead: false });
       }
       render();
     } catch (error) {
@@ -309,8 +328,12 @@ function stopPollingFallback() {
 
 function connectSocket() {
   disconnectSocket();
-  connectionStatus.textContent = '正在连接...';
+  if (!state.session?.sessionToken) {
+    connectionStatus.textContent = '未连接';
+    return;
+  }
 
+  connectionStatus.textContent = '正在连接...';
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const socket = new WebSocket(
     `${protocol}//${location.host}/ws?token=${encodeURIComponent(state.session.sessionToken)}`,
@@ -337,7 +360,7 @@ function connectSocket() {
     if (payload.type === 'message.created' || payload.type === 'read.updated') {
       await hydrateConversations();
       if (state.activeConversation?.id === payload.payload.conversationId) {
-        await loadMessages(state.activeConversation.id);
+        await loadMessages(state.activeConversation.id, { markAsRead: false });
       }
       render();
     }
@@ -354,6 +377,7 @@ function disconnectSocket() {
 
 function render() {
   const authenticated = Boolean(state.session?.sessionToken && state.session?.user);
+  authPanel.classList.toggle('hidden', authenticated);
   userPanel.classList.toggle('hidden', !authenticated);
   contactsPanel.classList.toggle('hidden', !authenticated);
   adminPanel.classList.toggle('hidden', !authenticated || !state.session?.user?.isAdmin);
@@ -365,20 +389,14 @@ function render() {
     contactsList.innerHTML = '';
     inviteList.innerHTML = '';
     userSummary.innerHTML = '';
+    chatAvatar.innerHTML = '';
     chatPanel.classList.add('hidden');
     emptyState.classList.remove('hidden');
     connectionStatus.textContent = '未连接';
     return;
   }
 
-  userSummary.innerHTML = `
-    <div>
-      <strong>${escapeHtml(state.session.user.nickname)}</strong>
-      <div class="meta">@${escapeHtml(state.session.user.account)}</div>
-    </div>
-    <span class="meta">${state.session.user.isAdmin ? '管理员' : '成员'}</span>
-  `;
-
+  renderUserSummary();
   renderContacts();
   renderInvites();
   renderConversations();
@@ -386,10 +404,11 @@ function render() {
 }
 
 function renderAuthPanel(mode) {
+  const rememberedCredentials = loadRememberedCredentials();
   authPanel.innerHTML = `
     <div class="auth-tabs">
-      <button class="auth-tab ghost-btn ${mode === 'login' ? 'active' : ''}" data-mode="login">登录</button>
-      <button class="auth-tab ghost-btn ${mode === 'register' ? 'active' : ''}" data-mode="register">邀请码注册</button>
+      <button class="auth-tab ghost-btn ${mode === 'login' ? 'active' : ''}" data-mode="login" type="button">登录</button>
+      <button class="auth-tab ghost-btn ${mode === 'register' ? 'active' : ''}" data-mode="register" type="button">邀请码注册</button>
     </div>
     ${
       mode === 'login'
@@ -471,6 +490,51 @@ function renderAuthPanel(mode) {
   });
 }
 
+function renderUserSummary() {
+  const user = state.session.user;
+  userSummary.innerHTML = `
+    <div class="user-card">
+      <div class="user-card-main">
+        ${renderAvatar(user, 'large')}
+        <div class="user-text">
+          <div class="user-title">${escapeHtml(user.nickname)}</div>
+          <div class="meta">@${escapeHtml(user.account)}</div>
+        </div>
+      </div>
+      <div class="stack">
+        <label class="ghost-btn" for="user-avatar-input">更换头像</label>
+        <input id="user-avatar-input" type="file" accept="image/*" hidden />
+        <span class="meta">${user.isAdmin ? '管理员' : '成员'}</span>
+      </div>
+    </div>
+  `;
+
+  userSummary.querySelector('#user-avatar-input')?.addEventListener('change', async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    try {
+      const upload = await uploadImage(file);
+      const response = await api('/api/users/me', {
+        method: 'PATCH',
+        body: {
+          nickname: state.session.user.nickname,
+          avatarUrl: upload.url,
+        },
+      });
+      state.session.user = response.user;
+      saveSession(state.session);
+      await Promise.all([hydrateSideData(), hydrateConversations()]);
+      render();
+      showToast('头像已更新');
+    } catch (error) {
+      handleError(error);
+    }
+  });
+}
+
 function renderContacts() {
   contactsList.innerHTML = '';
 
@@ -483,8 +547,13 @@ function renderContacts() {
     const element = document.createElement('div');
     element.className = 'contact-item';
     element.innerHTML = `
-      <div><strong>${escapeHtml(contact.nickname)}</strong></div>
-      <div class="meta">@${escapeHtml(contact.account)}</div>
+      <div class="contact-main">
+        ${renderAvatar(contact)}
+        <div class="contact-text">
+          <div class="contact-title">${escapeHtml(contact.nickname)}</div>
+          <div class="meta">@${escapeHtml(contact.account)}</div>
+        </div>
+      </div>
     `;
     element.addEventListener('click', async () => {
       try {
@@ -514,8 +583,10 @@ function renderInvites() {
     const element = document.createElement('div');
     element.className = 'invite-item';
     element.innerHTML = `
-      <div><strong>${escapeHtml(invite.code)}</strong></div>
-      <div class="meta">${invite.usedCount}/${invite.maxUses} 次 · ${invite.status}</div>
+      <div>
+        <strong>${escapeHtml(invite.code)}</strong>
+        <div class="meta">${invite.usedCount}/${invite.maxUses} 次 · ${escapeHtml(invite.status)}</div>
+      </div>
     `;
     inviteList.appendChild(element);
   }
@@ -531,13 +602,26 @@ function renderConversations() {
 
   for (const conversation of state.conversations) {
     const element = document.createElement('div');
-    element.className = `card ${state.activeConversation?.id === conversation.id ? 'active' : ''}`;
+    element.className = `conversation-item ${state.activeConversation?.id === conversation.id ? 'active' : ''}`;
     element.innerHTML = `
-      <div class="panel-header">
-        <strong>${escapeHtml(conversation.name || '未命名会话')}</strong>
-        ${conversation.unreadCount ? `<span class="badge">${conversation.unreadCount}</span>` : ''}
+      <div class="conversation-main">
+        ${renderAvatar({
+          nickname: conversation.name,
+          avatarUrl: conversation.avatarUrl,
+        })}
+        <div class="conversation-text">
+          <div class="conversation-title">${escapeHtml(conversation.name || '未命名会话')}</div>
+          <div class="conversation-preview">${escapeHtml(getConversationPreview(conversation))}</div>
+        </div>
       </div>
-      <div class="meta">${escapeHtml(conversation.latestMessage?.text || conversation.latestMessage?.imageName || '还没有消息')}</div>
+      <div class="conversation-side">
+        <span class="meta">${formatConversationTime(conversation.updatedAt)}</span>
+        ${
+          conversation.unreadCount
+            ? `<span class="badge">${conversation.unreadCount}</span>`
+            : '<span class="status-pill">已读</span>'
+        }
+      </div>
     `;
     element.addEventListener('click', () => {
       selectConversation(conversation.id).catch(handleError);
@@ -555,31 +639,43 @@ function renderMessages() {
 
   chatPanel.classList.remove('hidden');
   emptyState.classList.add('hidden');
+  chatAvatar.innerHTML = renderAvatar({
+    nickname: state.activeConversation.name,
+    avatarUrl: state.activeConversation.avatarUrl,
+  }, 'large');
   chatTitle.textContent = state.activeConversation.name || '未命名会话';
-  chatMeta.textContent = `${state.activeConversation.type === 'group' ? '群聊' : '私聊'} · ${state.activeConversation.members.length} 人`;
+  chatMeta.textContent = getConversationMeta(state.activeConversation);
   messageList.innerHTML = '';
 
   for (const message of state.messages) {
     const mine = message.senderId === state.session.user.id;
-    const sender = state.activeConversation.members.find((member) => member.id === message.senderId);
+    const sender = message.sender ?? state.activeConversation.members.find((member) => member.id === message.senderId);
     const row = document.createElement('div');
     row.className = `message-row ${mine ? 'mine' : ''}`;
+
+    if (!mine) {
+      row.insertAdjacentHTML('beforeend', renderAvatar(sender ?? { nickname: '?' }, 'small'));
+    }
 
     const bubble = document.createElement('div');
     bubble.className = 'message-bubble';
 
     if (message.type === 'image') {
       bubble.innerHTML = `
-        <div class="message-sender">${escapeHtml(sender?.nickname || '未知用户')}</div>
-        <img src="${escapeAttribute(message.imageUrl)}" alt="${escapeAttribute(message.imageName || 'image')}" />
-        <div>${escapeHtml(message.imageName || '图片')}</div>
-        <div class="message-meta">${formatDateTime(message.createdAt)}</div>
+        <img src="${escapeAttribute(message.imageUrl)}" alt="${escapeAttribute(message.imageName || '图片')}" />
+        <div class="message-content">${escapeHtml(message.imageName || '图片')}</div>
+        <div class="message-meta">
+          <span>${formatDateTime(message.createdAt)}</span>
+          ${mine ? `<span class="message-receipt">${escapeHtml(getReceiptText(message, state.activeConversation.type))}</span>` : ''}
+        </div>
       `;
     } else {
       bubble.innerHTML = `
-        <div class="message-sender">${escapeHtml(sender?.nickname || '未知用户')}</div>
-        <div>${escapeHtml(message.text)}</div>
-        <div class="message-meta">${formatDateTime(message.createdAt)}</div>
+        <div class="message-content">${escapeHtml(message.text)}</div>
+        <div class="message-meta">
+          <span>${formatDateTime(message.createdAt)}</span>
+          ${mine ? `<span class="message-receipt">${escapeHtml(getReceiptText(message, state.activeConversation.type))}</span>` : ''}
+        </div>
       `;
     }
 
@@ -598,10 +694,48 @@ function renderGroupMembers() {
     row.className = 'checkbox-row';
     row.innerHTML = `
       <input type="checkbox" value="${escapeAttribute(contact.id)}" />
+      ${renderAvatar(contact, 'xs')}
       <span>${escapeHtml(contact.nickname)} <span class="meta">@${escapeHtml(contact.account)}</span></span>
     `;
     groupMemberList.appendChild(row);
   }
+}
+
+async function uploadImage(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch('/api/uploads/images', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${state.session.sessionToken}`,
+    },
+    body: formData,
+  });
+
+  return readJson(response);
+}
+
+function didMessagePersist({ type, text = '', imageName = '', submittedAt = 0 }) {
+  const latestMessage = state.messages.at(-1);
+  if (!latestMessage || latestMessage.senderId !== state.session.user.id) {
+    return false;
+  }
+
+  const createdAt = new Date(latestMessage.createdAt).getTime();
+  if (createdAt < submittedAt - 15000) {
+    return false;
+  }
+
+  if (type === 'text') {
+    return latestMessage.type === 'text' && latestMessage.text === text;
+  }
+
+  if (type === 'image') {
+    return latestMessage.type === 'image' && latestMessage.imageName === imageName;
+  }
+
+  return false;
 }
 
 async function api(path, options = {}) {
@@ -651,6 +785,58 @@ function showToast(message) {
 function handleError(error) {
   console.error(error);
   showToast(error.message || String(error));
+}
+
+function getConversationPreview(conversation) {
+  if (!conversation.latestMessage) {
+    return '还没有消息';
+  }
+
+  if (conversation.latestMessage.type === 'image') {
+    return `[图片] ${conversation.latestMessage.imageName || '图片'}`;
+  }
+
+  return conversation.latestMessage.text || '还没有消息';
+}
+
+function getConversationMeta(conversation) {
+  if (conversation.type === 'direct') {
+    const peer = conversation.members.find((member) => member.id !== state.session.user.id);
+    return peer ? `私聊 · @${peer.account}` : '私聊';
+  }
+
+  return `群聊 · ${conversation.members.length} 人`;
+}
+
+function getReceiptText(message, conversationType) {
+  const count = Number(message.readByCount || 0);
+  if (conversationType === 'group') {
+    return count > 0 ? `${count} 人已读` : '未读';
+  }
+  return count > 0 ? '已读' : '未读';
+}
+
+function formatConversationTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function renderAvatar(entity, sizeClass = '') {
+  const label = getAvatarLabel(entity?.nickname || entity?.account || '?');
+  const classes = ['avatar', sizeClass].filter(Boolean).join(' ');
+  if (entity?.avatarUrl) {
+    return `<div class="${classes}"><img src="${escapeAttribute(entity.avatarUrl)}" alt="${escapeAttribute(entity.nickname || 'avatar')}" /></div>`;
+  }
+  return `<div class="${classes}"><span>${escapeHtml(label)}</span></div>`;
+}
+
+function getAvatarLabel(value) {
+  const text = String(value || '?').trim();
+  return text.slice(0, 1).toUpperCase();
 }
 
 function escapeHtml(value) {

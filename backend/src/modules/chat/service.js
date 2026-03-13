@@ -6,8 +6,17 @@ const MESSAGES = 'messages';
 const READ_STATES = 'readStates';
 const USERS = 'users';
 
+function toTimestamp(value) {
+  const timestamp = new Date(value ?? 0).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
 function sortByCreatedAt(items) {
-  return [...items].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  return [...items].sort((a, b) => toTimestamp(a.createdAt) - toTimestamp(b.createdAt));
+}
+
+function hasValidMembers(conversation) {
+  return Array.isArray(conversation?.memberIds);
 }
 
 export class ChatService {
@@ -24,7 +33,7 @@ export class ChatService {
     ]);
 
     return conversations
-      .filter((conversation) => conversation.memberIds.includes(userId))
+      .filter((conversation) => hasValidMembers(conversation) && conversation.memberIds.includes(userId))
       .map((conversation) => {
         const threadMessages = sortByCreatedAt(
           messages.filter((message) => message.conversationId === conversation.id),
@@ -40,12 +49,12 @@ export class ChatService {
           if (!readState?.lastReadAt) {
             return true;
           }
-          return new Date(message.createdAt).getTime() > new Date(readState.lastReadAt).getTime();
+          return toTimestamp(message.createdAt) > toTimestamp(readState.lastReadAt);
         }).length;
 
         return this.serializeConversation(conversation, users, userId, latestMessage, unreadCount);
       })
-      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      .sort((a, b) => toTimestamp(b.updatedAt) - toTimestamp(a.updatedAt));
   }
 
   async createDirectConversation(userId, peerUserId) {
@@ -61,7 +70,7 @@ export class ChatService {
     assert(peer, 404, 'Peer user not found.');
 
     const existing = conversations.find((conversation) => {
-      if (conversation.type !== 'direct') {
+      if (conversation.type !== 'direct' || !hasValidMembers(conversation)) {
         return false;
       }
       const pair = [...conversation.memberIds].sort().join(':');
@@ -114,19 +123,42 @@ export class ChatService {
 
   async listMessages(userId, conversationId, options = {}) {
     const conversation = await this.requireConversationMember(userId, conversationId);
-    const messages = await this.store.read(MESSAGES);
+    const [messages, readStates, users] = await Promise.all([
+      this.store.read(MESSAGES),
+      this.store.read(READ_STATES),
+      this.store.read(USERS),
+    ]);
     const before = options.before ? new Date(options.before).getTime() : null;
     const limit = Number(options.limit ?? 50);
+    const threadMessages = sortByCreatedAt(messages.filter((message) => message.conversationId === conversation.id));
+    const messageIndexById = new Map(threadMessages.map((message, index) => [message.id, index]));
+    const readIndexByUserId = new Map(conversation.memberIds.map((memberId) => {
+      const state = readStates.find(
+        (item) => item.conversationId === conversation.id && item.userId === memberId,
+      );
+      return [
+        memberId,
+        state?.lastReadMessageId && messageIndexById.has(state.lastReadMessageId)
+          ? messageIndexById.get(state.lastReadMessageId)
+          : -1,
+      ];
+    }));
 
-    return sortByCreatedAt(messages.filter((message) => {
+    return threadMessages.filter((message) => {
       if (message.conversationId !== conversation.id) {
         return false;
       }
       if (!before) {
         return true;
       }
-      return new Date(message.createdAt).getTime() < before;
-    })).slice(-limit);
+      return toTimestamp(message.createdAt) < before;
+    }).slice(-limit).map((message) => this.serializeMessage(
+      message,
+      users,
+      conversation,
+      messageIndexById,
+      readIndexByUserId,
+    ));
   }
 
   async sendMessage(userId, conversationId, payload) {
@@ -161,10 +193,11 @@ export class ChatService {
     await this.store.write(CONVERSATIONS, conversations);
 
     await this.markRead(userId, conversationId, message.id);
+    const serializedMessage = (await this.listMessages(userId, conversationId, { limit: 1 })).at(-1);
 
     return {
       conversation: await this.getConversationSummary(conversationId, userId),
-      message,
+      message: serializedMessage ?? message,
     };
   }
 
@@ -205,7 +238,7 @@ export class ChatService {
   async getConversationMembers(conversationId) {
     const conversations = await this.store.read(CONVERSATIONS);
     const conversation = conversations.find((item) => item.id === conversationId);
-    return conversation?.memberIds ?? [];
+    return hasValidMembers(conversation) ? conversation.memberIds : [];
   }
 
   async getConversationSummary(conversationId, userId) {
@@ -219,6 +252,7 @@ export class ChatService {
     const conversations = await this.store.read(CONVERSATIONS);
     const conversation = conversations.find((item) => item.id === conversationId);
     assert(conversation, 404, 'Conversation not found.');
+    assert(hasValidMembers(conversation), 500, 'Conversation members are invalid.');
     assert(conversation.memberIds.includes(userId), 403, 'You are not a member of this conversation.');
     return conversation;
   }
@@ -233,6 +267,7 @@ export class ChatService {
       id: conversation.id,
       type: conversation.type,
       name: directPeer?.nickname || conversation.name,
+      avatarUrl: directPeer?.avatarUrl || '',
       memberIds: conversation.memberIds,
       members: peers.map((user) => ({
         id: user.id,
@@ -244,6 +279,29 @@ export class ChatService {
       unreadCount,
       createdAt: conversation.createdAt,
       updatedAt: conversation.updatedAt,
+    };
+  }
+
+  serializeMessage(message, users, conversation, messageIndexById, readIndexByUserId) {
+    const sender = users.find((user) => user.id === message.senderId) ?? null;
+    const messageIndex = messageIndexById.get(message.id) ?? -1;
+    const readByUserIds = conversation.memberIds.filter(
+      (memberId) =>
+        memberId !== message.senderId && (readIndexByUserId.get(memberId) ?? -1) >= messageIndex,
+    );
+
+    return {
+      ...message,
+      sender: sender
+        ? {
+            id: sender.id,
+            nickname: sender.nickname,
+            avatarUrl: sender.avatarUrl,
+            account: sender.account,
+          }
+        : null,
+      readByUserIds,
+      readByCount: readByUserIds.length,
     };
   }
 }
