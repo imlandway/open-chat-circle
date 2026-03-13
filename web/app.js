@@ -42,23 +42,31 @@ function boot() {
   renderAuthPanel('login');
   wireEvents();
   if (state.session?.sessionToken) {
-    hydrateApp().catch(handleError);
+    hydrateApp().catch((error) => {
+      resetToLoggedOut();
+      handleError(error);
+    });
   } else {
     render();
   }
 }
 
+function resetToLoggedOut() {
+  disconnectSocket();
+  state.session = null;
+  state.contacts = [];
+  state.invites = [];
+  state.conversations = [];
+  state.messages = [];
+  state.activeConversation = null;
+  saveSession(null);
+  renderAuthPanel('login');
+  render();
+}
+
 function wireEvents() {
   logoutBtn.addEventListener('click', async () => {
-    disconnectSocket();
-    state.session = null;
-    state.contacts = [];
-    state.invites = [];
-    state.conversations = [];
-    state.messages = [];
-    state.activeConversation = null;
-    saveSession(null);
-    render();
+    resetToLoggedOut();
   });
 
   refreshContactsBtn.addEventListener('click', () => hydrateSideData().catch(handleError));
@@ -303,10 +311,10 @@ function disconnectSocket() {
 }
 
 function render() {
-  const authenticated = Boolean(state.session?.sessionToken);
+  const authenticated = Boolean(state.session?.sessionToken && state.session?.user);
   userPanel.classList.toggle('hidden', !authenticated);
   contactsPanel.classList.toggle('hidden', !authenticated);
-  adminPanel.classList.toggle('hidden', !authenticated || !state.session.user.isAdmin);
+  adminPanel.classList.toggle('hidden', !authenticated || !state.session?.user?.isAdmin);
   createGroupBtn.classList.toggle('hidden', !authenticated);
 
   if (!authenticated) {
