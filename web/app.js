@@ -56,6 +56,9 @@ const avatarCropStage = document.querySelector('#avatar-crop-stage');
 const avatarCropImage = document.querySelector('#avatar-crop-image');
 const closeAvatarBtn = document.querySelector('#close-avatar-btn');
 const saveAvatarBtn = document.querySelector('#save-avatar-btn');
+const avatarViewDialog = document.querySelector('#avatar-view-dialog');
+const avatarViewImage = document.querySelector('#avatar-view-image');
+const closeAvatarViewBtn = document.querySelector('#close-avatar-view-btn');
 
 boot();
 
@@ -173,6 +176,11 @@ function wireStaticEvents() {
     event.preventDefault();
     closeAvatarCropper();
   });
+  closeAvatarViewBtn?.addEventListener('click', closeAvatarViewer);
+  avatarViewDialog?.addEventListener('cancel', (event) => {
+    event.preventDefault();
+    closeAvatarViewer();
+  });
 
   saveAvatarBtn.addEventListener('click', async () => {
     try {
@@ -202,6 +210,7 @@ function wireStaticEvents() {
   avatarCropStage.addEventListener('pointerup', onAvatarPointerEnd);
   avatarCropStage.addEventListener('pointercancel', onAvatarPointerEnd);
   avatarCropStage.addEventListener('wheel', onAvatarWheel, { passive: false });
+  document.addEventListener('click', onAvatarPreviewClick);
 
   window.addEventListener('resize', () => {
     if (avatarDialog.open && state.avatarCrop.image) {
@@ -1381,6 +1390,43 @@ function closeAvatarCropper() {
   }
 }
 
+function openAvatarViewer(url, label = '头像预览') {
+  if (!avatarViewDialog || !avatarViewImage || !url) {
+    return;
+  }
+
+  avatarViewImage.src = url;
+  avatarViewImage.alt = label;
+  avatarViewDialog.showModal();
+}
+
+function closeAvatarViewer() {
+  if (!avatarViewDialog || !avatarViewImage) {
+    return;
+  }
+
+  if (avatarViewDialog.open) {
+    avatarViewDialog.close();
+  }
+
+  avatarViewImage.removeAttribute('src');
+}
+
+function onAvatarPreviewClick(event) {
+  const trigger = event.target.closest('[data-avatar-preview]');
+  if (!trigger) {
+    return;
+  }
+
+  const url = trigger.dataset.avatarUrl;
+  if (!url) {
+    return;
+  }
+
+  event.preventDefault();
+  openAvatarViewer(url, trigger.dataset.avatarLabel || '头像预览');
+}
+
 function resetAvatarCropper() {
   if (state.avatarCrop.objectUrl) {
     URL.revokeObjectURL(state.avatarCrop.objectUrl);
@@ -1704,11 +1750,15 @@ function renderAvatar(user, size = '') {
   }
 
   const initials = getInitials(user?.nickname || user?.account || '?');
+  const label = escapeAttribute(user?.nickname || user?.account || '头像');
+  const previewAttrs = user?.avatarUrl
+    ? ` data-avatar-preview="true" data-avatar-url="${escapeAttribute(user.avatarUrl)}" data-avatar-label="${label}" tabindex="0" role="button"`
+    : '';
   const content = user?.avatarUrl
-    ? `<img src="${escapeAttribute(user.avatarUrl)}" alt="${escapeAttribute(user.nickname || 'avatar')}" />`
+    ? `<img src="${escapeAttribute(user.avatarUrl)}" alt="${label}" />`
     : escapeHtml(initials);
 
-  return `<div class="${classes.join(' ')}">${content}</div>`;
+  return `<div class="${classes.join(' ')}"${previewAttrs}>${content}</div>`;
 }
 
 function getInitials(value) {
