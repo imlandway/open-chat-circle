@@ -180,7 +180,7 @@
           <div class="panel-header">
             <h3>拉人进群</h3>
           </div>
-          <label class="field">
+          <label class="field" hidden>
             <span>搜索好友</span>
             <input
               id="group-member-search-input"
@@ -189,12 +189,12 @@
               autocomplete="off"
             />
           </label>
-          <div class="stack">
+          <div class="stack" hidden>
             <span>已选择</span>
             <div id="group-selected-member-list" class="group-member-chip-list"></div>
           </div>
           <div id="group-addable-member-list" class="list compact-list"></div>
-          <button id="submit-add-group-members-btn" class="primary-btn" type="button">确认拉人</button>
+          <button id="submit-add-group-members-btn" class="primary-btn" type="button" hidden>确认拉人</button>
         </div>
       </div>
     </dialog>

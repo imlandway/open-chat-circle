@@ -831,13 +831,7 @@ function renderGroupProfile() {
   );
   const selectedIds = new Set(state.groupSelectedAddMemberIds);
   const memberQuery = state.groupMemberAddQuery.trim().toLowerCase();
-  const filteredAddableMembers = addableMembers.filter((contact) => {
-    if (!memberQuery) {
-      return true;
-    }
-    return contact.nickname.toLowerCase().includes(memberQuery)
-      || contact.account.toLowerCase().includes(memberQuery);
-  });
+  const filteredAddableMembers = addableMembers;
   groupMemberAddPanel?.classList.toggle('hidden', !conversation.canManageMembers);
   if (groupMemberSearchInput) {
     groupMemberSearchInput.value = state.groupMemberAddQuery;
@@ -869,15 +863,9 @@ function renderGroupProfile() {
     return;
   }
 
-  if (filteredAddableMembers.length === 0) {
-    groupAddableMemberList.innerHTML = '<div class="invite-item">没有找到符合搜索的好友</div>';
-    return;
-  }
-
   for (const contact of filteredAddableMembers) {
-    const selected = selectedIds.has(contact.id);
     const row = document.createElement('div');
-    row.className = `contact-item group-member-option ${selected ? 'is-selected' : ''}`;
+    row.className = 'contact-item group-member-option';
     row.innerHTML = `
       <div class="contact-main">
         ${renderAvatar(contact, 'small')}
@@ -887,11 +875,11 @@ function renderGroupProfile() {
         </div>
       </div>
       <button
-        class="${selected ? 'ghost-btn' : 'primary-btn'} group-member-option-btn"
+        class="primary-btn group-member-option-btn"
         type="button"
-        data-toggle-group-member-id="${escapeAttribute(contact.id)}"
+        data-add-group-member-id="${escapeAttribute(contact.id)}"
       >
-        ${selected ? '已选择' : '选择'}
+        拉进群
       </button>
     `;
     groupAddableMemberList.appendChild(row);
@@ -934,6 +922,23 @@ async function submitGroupMembersAdd() {
   state.groupProfileConversation = response.conversation;
   state.groupMemberAddQuery = '';
   state.groupSelectedAddMemberIds = [];
+  renderGroupProfile();
+  render();
+  showToast('已拉人进群');
+}
+
+async function addGroupMember(memberId) {
+  const conversation = state.groupProfileConversation;
+  if (!conversation || !memberId) {
+    return;
+  }
+
+  const response = await api(`/api/conversations/${conversation.id}/members`, {
+    method: 'POST',
+    body: { memberIds: [memberId] },
+  });
+  applyConversationUpdate(response.conversation);
+  state.groupProfileConversation = response.conversation;
   renderGroupProfile();
   render();
   showToast('已拉人进群');
@@ -1880,7 +1885,7 @@ function renderMessages() {
   chatAvatar.innerHTML = renderAvatar({
     nickname: state.activeConversation.name,
     avatarUrl: state.activeConversation.avatarUrl,
-  }, 'large');
+  }, 'large', { preview: state.activeConversation.type !== 'group' });
   chatTitle.textContent = state.activeConversation.name || '未命名会话';
   chatMeta.textContent = getConversationMeta(state.activeConversation);
   chatAvatar.classList.toggle('clickable-avatar', state.activeConversation.type === 'group');
@@ -2307,10 +2312,10 @@ function onDocumentClick(event) {
     return;
   }
 
-  const toggleGroupMemberTrigger = event.target.closest('[data-toggle-group-member-id]');
-  if (toggleGroupMemberTrigger) {
+  const addGroupMemberTrigger = event.target.closest('[data-add-group-member-id]');
+  if (addGroupMemberTrigger) {
     event.preventDefault();
-    toggleGroupMemberSelection(toggleGroupMemberTrigger.dataset.toggleGroupMemberId);
+    addGroupMember(addGroupMemberTrigger.dataset.addGroupMemberId).catch(handleError);
     return;
   }
 
@@ -2684,7 +2689,7 @@ function getReceiptText(message, conversationType) {
   return message.readByCount > 0 ? '已读' : '未读';
 }
 
-function renderAvatar(user, size = '') {
+function renderAvatar(user, size = '', options = {}) {
   const classes = ['avatar'];
   if (size) {
     classes.push(size);
@@ -2692,7 +2697,7 @@ function renderAvatar(user, size = '') {
 
   const initials = getInitials(user?.nickname || user?.account || '?');
   const label = escapeAttribute(user?.nickname || user?.account || '头像');
-  const previewAttrs = user?.avatarUrl
+  const previewAttrs = user?.avatarUrl && (options.preview ?? true)
     ? ` data-avatar-preview="true" data-avatar-url="${escapeAttribute(user.avatarUrl)}" data-avatar-label="${label}" tabindex="0" role="button"`
     : '';
   const content = user?.avatarUrl
