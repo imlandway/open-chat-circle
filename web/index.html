@@ -40,7 +40,10 @@
             <section id="contacts-panel" class="panel hidden">
               <div class="panel-header">
                 <h3>联系人</h3>
-                <button id="refresh-contacts-btn" class="ghost-btn" type="button">刷新</button>
+                <div class="inline-actions">
+                  <button id="add-friend-btn" class="ghost-btn" type="button">加好友</button>
+                  <button id="refresh-contacts-btn" class="ghost-btn" type="button">刷新</button>
+                </div>
               </div>
               <div id="contacts-list" class="list"></div>
             </section>
@@ -83,6 +86,7 @@
               <div id="chat-resizer" class="chat-resizer" title="拖动调整聊天区域高度"></div>
 
               <form id="message-form" class="composer">
+                <div id="reply-preview" class="reply-preview hidden"></div>
                 <input id="message-input" type="text" placeholder="输入消息" autocomplete="off" />
                 <label class="file-btn" for="image-input">
                   图片
@@ -142,7 +146,48 @@
       </div>
     </dialog>
 
+    <dialog id="add-friend-dialog">
+      <div class="dialog-form">
+        <div class="panel-header">
+          <h3>添加好友</h3>
+          <button class="ghost-btn" type="button" id="close-add-friend-btn">关闭</button>
+        </div>
+        <form id="add-friend-form" class="stack">
+          <label class="field">
+            <span>账号或昵称</span>
+            <input id="friend-search-input" name="query" type="text" placeholder="输入账号或昵称搜索" />
+          </label>
+          <button class="primary-btn" type="submit">搜索</button>
+        </form>
+        <div id="discover-user-list" class="list compact-list"></div>
+      </div>
+    </dialog>
+
+    <dialog id="group-profile-dialog">
+      <div class="dialog-form">
+        <div class="panel-header">
+          <h3 id="group-profile-title">群主页</h3>
+          <button class="ghost-btn" type="button" id="close-group-profile-btn">关闭</button>
+        </div>
+        <div id="group-profile-meta" class="stack"></div>
+        <div class="stack">
+          <div class="panel-header">
+            <h3>群成员</h3>
+          </div>
+          <div id="group-member-manage-list" class="list compact-list"></div>
+        </div>
+        <div id="group-member-add-panel" class="stack hidden">
+          <div class="panel-header">
+            <h3>拉人进群</h3>
+          </div>
+          <div id="group-addable-member-list" class="list compact-list"></div>
+          <button id="submit-add-group-members-btn" class="primary-btn" type="button">确认拉人</button>
+        </div>
+      </div>
+    </dialog>
+
     <div id="toast" class="toast hidden"></div>
+    <div id="message-context-menu" class="message-context-menu hidden"></div>
     <script src="/app/app.js" type="module"></script>
   </body>
 </html>

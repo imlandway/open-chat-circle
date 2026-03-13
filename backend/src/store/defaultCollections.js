@@ -1,5 +1,6 @@
 export const DEFAULT_COLLECTIONS = {
   users: [],
+  friendships: [],
   invites: [],
   conversations: [],
   messages: [],

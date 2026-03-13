@@ -20,9 +20,13 @@ state = {
   contacts: [],
   invites: [],
   adminUsers: [],
+  discoverUsers: [],
   conversations: [],
   messages: [],
   activeConversation: null,
+  replyToMessageId: null,
+  groupProfileConversation: null,
+  messageContextMenu: null,
   realtimeSource: null,
   pollingTimer: null,
   chatListHeight: loadChatListHeight(),
@@ -53,10 +57,12 @@ const inviteList = document.querySelector('#invite-list');
 const adminUserList = document.querySelector('#admin-user-list');
 const connectionStatus = document.querySelector('#connection-status');
 const createGroupBtn = document.querySelector('#create-group-btn');
+const addFriendBtn = document.querySelector('#add-friend-btn');
 const logoutBtn = document.querySelector('#logout-btn');
 const refreshContactsBtn = document.querySelector('#refresh-contacts-btn');
 const createInviteBtn = document.querySelector('#create-invite-btn');
 const messageForm = document.querySelector('#message-form');
+const replyPreview = document.querySelector('#reply-preview');
 const messageInput = document.querySelector('#message-input');
 const imageInput = document.querySelector('#image-input');
 const toast = document.querySelector('#toast');
@@ -73,6 +79,20 @@ const saveAvatarBtn = document.querySelector('#save-avatar-btn');
 const avatarViewDialog = document.querySelector('#avatar-view-dialog');
 const avatarViewImage = document.querySelector('#avatar-view-image');
 const closeAvatarViewBtn = document.querySelector('#close-avatar-view-btn');
+const addFriendDialog = document.querySelector('#add-friend-dialog');
+const addFriendForm = document.querySelector('#add-friend-form');
+const friendSearchInput = document.querySelector('#friend-search-input');
+const discoverUserList = document.querySelector('#discover-user-list');
+const closeAddFriendBtn = document.querySelector('#close-add-friend-btn');
+const groupProfileDialog = document.querySelector('#group-profile-dialog');
+const groupProfileTitle = document.querySelector('#group-profile-title');
+const groupProfileMeta = document.querySelector('#group-profile-meta');
+const groupMemberManageList = document.querySelector('#group-member-manage-list');
+const groupMemberAddPanel = document.querySelector('#group-member-add-panel');
+const groupAddableMemberList = document.querySelector('#group-addable-member-list');
+const submitAddGroupMembersBtn = document.querySelector('#submit-add-group-members-btn');
+const closeGroupProfileBtn = document.querySelector('#close-group-profile-btn');
+const messageContextMenu = document.querySelector('#message-context-menu');
 
 boot();
 
@@ -123,6 +143,10 @@ function wireStaticEvents() {
 
   refreshContactsBtn.addEventListener('click', () => {
     hydrateSideData().catch(handleError);
+  });
+
+  addFriendBtn?.addEventListener('click', () => {
+    openAddFriendDialog().catch(handleError);
   });
 
   createInviteBtn.addEventListener('click', async () => {
@@ -183,6 +207,12 @@ function wireStaticEvents() {
   });
 
   chatResizer.addEventListener('pointerdown', startChatResize);
+  messageList.addEventListener('contextmenu', onMessageBubbleContextMenu);
+  chatAvatar.addEventListener('click', () => {
+    if (state.activeConversation?.type === 'group') {
+      openGroupProfile(state.activeConversation.id).catch(handleError);
+    }
+  });
 
   closeAvatarBtn.addEventListener('click', closeAvatarCropper);
   avatarDialog.addEventListener('close', resetAvatarCropper);
@@ -194,6 +224,27 @@ function wireStaticEvents() {
   avatarViewDialog?.addEventListener('cancel', (event) => {
     event.preventDefault();
     closeAvatarViewer();
+  });
+  closeAddFriendBtn?.addEventListener('click', () => {
+    addFriendDialog?.close();
+  });
+  addFriendDialog?.addEventListener('cancel', (event) => {
+    event.preventDefault();
+    addFriendDialog.close();
+  });
+  addFriendForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    await searchDiscoverUsers(friendSearchInput?.value || '');
+  });
+  closeGroupProfileBtn?.addEventListener('click', () => {
+    closeGroupProfile();
+  });
+  groupProfileDialog?.addEventListener('cancel', (event) => {
+    event.preventDefault();
+    closeGroupProfile();
+  });
+  submitAddGroupMembersBtn?.addEventListener('click', async () => {
+    await submitGroupMembersAdd();
   });
 
   saveAvatarBtn.addEventListener('click', async () => {
@@ -224,12 +275,19 @@ function wireStaticEvents() {
   avatarCropStage.addEventListener('pointerup', onAvatarPointerEnd);
   avatarCropStage.addEventListener('pointercancel', onAvatarPointerEnd);
   avatarCropStage.addEventListener('wheel', onAvatarWheel, { passive: false });
-  document.addEventListener('click', onAvatarPreviewClick);
+  document.addEventListener('click', onDocumentClick);
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      closeMessageContextMenu();
+    }
+  });
+  window.addEventListener('scroll', closeMessageContextMenu, true);
 
   window.addEventListener('resize', () => {
     if (avatarDialog.open && state.avatarCrop.image) {
       initializeAvatarCrop();
     }
+    closeMessageContextMenu();
     applyChatHeight();
   });
 
@@ -569,6 +627,7 @@ async function selectConversation(conversationId) {
     return;
   }
 
+  closeMessageContextMenu();
   state.navSection = 'conversations';
   state.activeConversation = conversation;
   render();
@@ -609,6 +668,176 @@ async function refreshActiveConversation(markAsRead = false) {
   }
   await loadMessages(state.activeConversation.id, { markAsRead });
   render();
+}
+
+async function searchDiscoverUsers(query = '') {
+  const response = await api(`/api/users/discover?q=${encodeURIComponent(query)}`);
+  state.discoverUsers = response.users || [];
+  renderDiscoverUsers();
+}
+
+async function openAddFriendDialog() {
+  await searchDiscoverUsers('');
+  addFriendDialog?.showModal();
+  friendSearchInput?.focus();
+}
+
+function renderDiscoverUsers() {
+  if (!discoverUserList) {
+    return;
+  }
+
+  if (state.discoverUsers.length === 0) {
+    discoverUserList.innerHTML = '<div class="invite-item">没有找到可添加的用户</div>';
+    return;
+  }
+
+  discoverUserList.innerHTML = '';
+
+  for (const user of state.discoverUsers) {
+    const card = document.createElement('div');
+    card.className = 'contact-item';
+    card.innerHTML = `
+      <div class="contact-main">
+        ${renderAvatar(user)}
+        <div class="contact-text">
+          <div class="contact-title">${escapeHtml(user.nickname)}</div>
+          <div class="meta">@${escapeHtml(user.account)}</div>
+        </div>
+      </div>
+      <button class="primary-btn" type="button" data-add-friend-id="${escapeAttribute(user.id)}">添加</button>
+    `;
+    discoverUserList.appendChild(card);
+  }
+}
+
+async function addFriend(userId) {
+  const result = await api('/api/friends', {
+    method: 'POST',
+    body: { userId },
+  });
+  showToast(`已添加 ${result.user.nickname}`);
+  await Promise.all([hydrateSideData(), hydrateConversations(), searchDiscoverUsers(friendSearchInput?.value || '')]);
+  render();
+}
+
+async function openGroupProfile(conversationId) {
+  const response = await api(`/api/conversations/${conversationId}`);
+  state.groupProfileConversation = response.conversation;
+  renderGroupProfile();
+  groupProfileDialog?.showModal();
+}
+
+function closeGroupProfile() {
+  state.groupProfileConversation = null;
+  if (groupProfileDialog?.open) {
+    groupProfileDialog.close();
+  }
+}
+
+function renderGroupProfile() {
+  const conversation = state.groupProfileConversation;
+  if (
+    !conversation
+    || !groupProfileTitle
+    || !groupProfileMeta
+    || !groupMemberManageList
+    || !groupAddableMemberList
+  ) {
+    return;
+  }
+
+  groupProfileTitle.textContent = conversation.name || '群主页';
+  groupProfileMeta.innerHTML = `
+    <div class="user-card">
+      <div class="user-card-main">
+        ${renderAvatar({ nickname: conversation.name, avatarUrl: conversation.avatarUrl }, 'large')}
+        <div class="user-text">
+          <div class="user-title">${escapeHtml(conversation.name || '未命名群聊')}</div>
+          <div class="meta">${escapeHtml(conversation.owner?.nickname || '未知群主')} · ${conversation.members.length} 人</div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  groupMemberManageList.innerHTML = '';
+  for (const member of conversation.members) {
+    const isOwner = member.id === conversation.createdBy;
+    const canKick = conversation.canManageMembers && !isOwner;
+    const row = document.createElement('div');
+    row.className = 'contact-item';
+    row.innerHTML = `
+      <div class="contact-main">
+        ${renderAvatar(member, 'small')}
+        <div class="contact-text">
+          <div class="contact-title">${escapeHtml(member.nickname)}</div>
+          <div class="meta">@${escapeHtml(member.account)}${isOwner ? ' · 群主' : ''}</div>
+        </div>
+      </div>
+      ${canKick ? `<button class="ghost-btn" type="button" data-kick-member-id="${escapeAttribute(member.id)}">移出</button>` : ''}
+    `;
+    groupMemberManageList.appendChild(row);
+  }
+
+  const addableMembers = state.contacts.filter(
+    (contact) => !conversation.memberIds.includes(contact.id),
+  );
+  groupMemberAddPanel?.classList.toggle('hidden', !conversation.canManageMembers);
+  groupAddableMemberList.innerHTML = '';
+  if (conversation.canManageMembers) {
+    if (addableMembers.length === 0) {
+      groupAddableMemberList.innerHTML = '<div class="invite-item">没有可拉入的好友</div>';
+    } else {
+      for (const contact of addableMembers) {
+        const label = document.createElement('label');
+        label.className = 'checkbox-row';
+        label.innerHTML = `
+          <input type="checkbox" value="${escapeAttribute(contact.id)}" />
+          ${renderAvatar(contact, 'xs')}
+          <span>${escapeHtml(contact.nickname)} <span class="meta">@${escapeHtml(contact.account)}</span></span>
+        `;
+        groupAddableMemberList.appendChild(label);
+      }
+    }
+  }
+}
+
+async function submitGroupMembersAdd() {
+  const conversation = state.groupProfileConversation;
+  if (!conversation || !groupAddableMemberList) {
+    return;
+  }
+
+  const memberIds = [...groupAddableMemberList.querySelectorAll('input[type="checkbox"]:checked')]
+    .map((checkbox) => checkbox.value);
+  if (memberIds.length === 0) {
+    showToast('请先选择要拉入的好友');
+    return;
+  }
+
+  const response = await api(`/api/conversations/${conversation.id}/members`, {
+    method: 'POST',
+    body: { memberIds },
+  });
+  applyConversationUpdate(response.conversation);
+  state.groupProfileConversation = response.conversation;
+  renderGroupProfile();
+  showToast('已拉人进群');
+}
+
+async function removeGroupMember(memberId) {
+  const conversation = state.groupProfileConversation;
+  if (!conversation) {
+    return;
+  }
+
+  const response = await api(`/api/conversations/${conversation.id}/members/${memberId}`, {
+    method: 'DELETE',
+  });
+  applyConversationUpdate(response.conversation);
+  state.groupProfileConversation = response.conversation;
+  renderGroupProfile();
+  showToast('已移出群成员');
 }
 
 function connectRealtime() {
@@ -709,6 +938,42 @@ async function handleRealtimeEvent(event) {
       await loadMessages(state.activeConversation.id, {
         markAsRead: event.payload.senderId !== state.session.user.id,
       });
+    }
+    render();
+    return;
+  }
+
+  if (event.type === 'message.updated') {
+    upsertMessage(event.payload);
+    await hydrateConversations();
+    render();
+    return;
+  }
+
+  if (event.type === 'conversation.updated') {
+    if (!event.payload.memberIds?.includes(state.session.user.id)) {
+      state.conversations = state.conversations.filter((item) => item.id !== event.payload.id);
+      if (state.activeConversation?.id === event.payload.id) {
+        state.activeConversation = null;
+        state.messages = [];
+      }
+      if (state.groupProfileConversation?.id === event.payload.id) {
+        closeGroupProfile();
+      }
+      render();
+      return;
+    }
+    mergeConversation(event.payload);
+    if (state.groupProfileConversation?.id === event.payload.id) {
+      state.groupProfileConversation = event.payload;
+      renderGroupProfile();
+    }
+    if (state.activeConversation?.id === event.payload.id) {
+      state.activeConversation = {
+        ...state.activeConversation,
+        ...event.payload,
+      };
+      await loadMessages(event.payload.id, { markAsRead: false });
     }
     render();
     return;
@@ -1427,6 +1692,8 @@ function renderMessages() {
   if (!state.activeConversation) {
     chatPanel.classList.add('hidden');
     emptyState.classList.remove('hidden');
+    clearReplyTarget();
+    closeMessageContextMenu();
     return;
   }
 
@@ -1438,12 +1705,15 @@ function renderMessages() {
   }, 'large');
   chatTitle.textContent = state.activeConversation.name || '未命名会话';
   chatMeta.textContent = getConversationMeta(state.activeConversation);
+  chatAvatar.classList.toggle('clickable-avatar', state.activeConversation.type === 'group');
+  renderReplyPreview();
   requestAnimationFrame(() => {
     applyChatHeight();
   });
 
   if (state.messages.length === 0) {
     messageList.innerHTML = '<div class="meta">还没有消息，发一条试试吧。</div>';
+    closeMessageContextMenu();
     return;
   }
 
@@ -1453,6 +1723,7 @@ function renderMessages() {
     const mine = message.senderId === state.session.user.id;
     const row = document.createElement('div');
     row.className = `message-row ${mine ? 'mine' : ''}`;
+    row.dataset.messageId = message.id;
 
     if (!mine) {
       const sender = message.sender
@@ -1463,28 +1734,45 @@ function renderMessages() {
 
     const bubble = document.createElement('div');
     bubble.className = 'message-bubble';
-    bubble.innerHTML = message.type === 'image'
+    bubble.dataset.messageBubbleId = message.id;
+    const replyBlock = message.replyTo
       ? `
-        <img class="message-image" src="${escapeAttribute(message.imageUrl)}" alt="${escapeAttribute(message.imageName || '图片')}" />
-        <div class="message-content">${escapeHtml(message.imageName || '图片')}</div>
-        <div class="message-meta">
-          <span>${formatDateTime(message.createdAt)}</span>
-          ${mine ? `<span class="message-receipt">${escapeHtml(getReceiptText(message, state.activeConversation.type))}</span>` : ''}
-        </div>
+        <button class="reply-chip" type="button" data-jump-message-id="${escapeAttribute(message.replyTo.id)}">
+          <strong>${escapeHtml(message.replyTo.sender?.nickname || '未知用户')}</strong>
+          <span>${escapeHtml(getReplyPreviewText(message.replyTo))}</span>
+        </button>
       `
-      : `
-        <div class="message-content">${escapeHtml(message.text)}</div>
-        <div class="message-meta">
-          <span>${formatDateTime(message.createdAt)}</span>
-          ${mine ? `<span class="message-receipt">${escapeHtml(getReceiptText(message, state.activeConversation.type))}</span>` : ''}
-        </div>
-      `;
+      : '';
+    const body = message.isRecalled
+      ? '<div class="message-content message-recalled">这条消息已撤回</div>'
+      : message.type === 'image'
+        ? `
+          <img
+            class="message-image"
+            src="${escapeAttribute(message.imageUrl)}"
+            alt="${escapeAttribute(message.imageName || '图片')}"
+            data-image-preview="true"
+            data-image-url="${escapeAttribute(message.imageUrl)}"
+            data-image-label="${escapeAttribute(message.imageName || '图片预览')}"
+          />
+          <div class="message-content">${escapeHtml(message.imageName || '图片')}</div>
+        `
+        : `<div class="message-content">${escapeHtml(message.text)}</div>`;
+    bubble.innerHTML = `
+      ${replyBlock}
+      ${body}
+      <div class="message-meta">
+        <span>${formatDateTime(message.createdAt)}</span>
+        ${mine ? `<span class="message-receipt">${escapeHtml(getReceiptText(message, state.activeConversation.type))}</span>` : ''}
+      </div>
+    `;
 
     row.appendChild(bubble);
     messageList.appendChild(row);
   }
 
   messageList.scrollTop = messageList.scrollHeight;
+  renderMessageContextMenu();
 }
 
 function renderGroupMembers() {
@@ -1507,6 +1795,186 @@ function renderGroupMembers() {
   }
 }
 
+function setReplyTarget(messageId) {
+  const message = state.messages.find((item) => item.id === messageId);
+  if (!message || message.isRecalled) {
+    return;
+  }
+
+  state.replyToMessageId = messageId;
+  renderReplyPreview();
+  messageInput?.focus();
+}
+
+function clearReplyTarget() {
+  state.replyToMessageId = null;
+  renderReplyPreview();
+}
+
+function renderReplyPreview() {
+  if (!replyPreview) {
+    return;
+  }
+
+  const message = state.messages.find((item) => item.id === state.replyToMessageId);
+  if (!message) {
+    replyPreview.classList.add('hidden');
+    replyPreview.innerHTML = '';
+    return;
+  }
+
+  const senderName = message.sender?.nickname || '未知用户';
+  const previewText = message.type === 'image'
+    ? `[图片] ${message.imageName || '图片'}`
+    : message.text;
+  replyPreview.classList.remove('hidden');
+  replyPreview.innerHTML = `
+    <div class="reply-preview-copy">
+      <strong>回复 ${escapeHtml(senderName)}</strong>
+      <span>${escapeHtml(previewText || '消息')}</span>
+    </div>
+    <button class="ghost-btn" type="button" data-clear-reply>取消</button>
+  `;
+  replyPreview.querySelector('[data-clear-reply]')?.addEventListener('click', () => {
+    clearReplyTarget();
+  });
+}
+
+function onMessageBubbleContextMenu(event) {
+  const bubble = event.target.closest('.message-bubble');
+  if (!bubble) {
+    closeMessageContextMenu();
+    return;
+  }
+
+  const messageId = bubble.dataset.messageBubbleId;
+  const message = state.messages.find((item) => item.id === messageId);
+  if (!message) {
+    closeMessageContextMenu();
+    return;
+  }
+
+  const actions = [];
+  if (!message.isRecalled) {
+    actions.push({ key: 'reply', label: '回复' });
+  }
+  if (message.senderId === state.session?.user?.id && !message.isRecalled) {
+    actions.push({ key: 'recall', label: '撤回', danger: true });
+  }
+
+  if (actions.length === 0) {
+    closeMessageContextMenu();
+    return;
+  }
+
+  event.preventDefault();
+  state.messageContextMenu = {
+    messageId,
+    x: event.clientX,
+    y: event.clientY,
+    actions,
+  };
+  renderMessageContextMenu();
+}
+
+function renderMessageContextMenu() {
+  if (!messageContextMenu) {
+    return;
+  }
+
+  const menu = state.messageContextMenu;
+  if (!menu) {
+    messageContextMenu.classList.add('hidden');
+    messageContextMenu.innerHTML = '';
+    return;
+  }
+
+  messageContextMenu.innerHTML = menu.actions
+    .map((action) => `
+      <button
+        class="message-context-action ${action.danger ? 'danger' : ''}"
+        type="button"
+        data-message-menu-action="${escapeAttribute(action.key)}"
+        data-message-id="${escapeAttribute(menu.messageId)}"
+      >
+        ${escapeHtml(action.label)}
+      </button>
+    `)
+    .join('');
+  messageContextMenu.classList.remove('hidden');
+
+  const menuWidth = 160;
+  const estimatedHeight = menu.actions.length * 42 + 12;
+  const left = Math.min(menu.x, window.innerWidth - menuWidth - 12);
+  const top = Math.min(menu.y, window.innerHeight - estimatedHeight - 12);
+  messageContextMenu.style.left = `${Math.max(12, left)}px`;
+  messageContextMenu.style.top = `${Math.max(12, top)}px`;
+}
+
+function closeMessageContextMenu() {
+  state.messageContextMenu = null;
+  if (!messageContextMenu) {
+    return;
+  }
+  messageContextMenu.classList.add('hidden');
+  messageContextMenu.innerHTML = '';
+}
+
+async function recallMessage(messageId) {
+  if (!state.activeConversation) {
+    return;
+  }
+
+  const response = await api(`/api/conversations/${state.activeConversation.id}/messages/${messageId}/recall`, {
+    method: 'POST',
+  });
+  closeMessageContextMenu();
+  upsertMessage(response.message);
+  applyConversationUpdate(response.conversation);
+  if (state.replyToMessageId === messageId) {
+    clearReplyTarget();
+  }
+  render();
+  showToast('消息已撤回');
+}
+
+function jumpToMessage(messageId) {
+  const target = messageList.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
+  if (!target) {
+    return;
+  }
+
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  target.classList.add('message-row-highlight');
+  window.setTimeout(() => {
+    target.classList.remove('message-row-highlight');
+  }, 1600);
+}
+
+function applyConversationUpdate(conversation) {
+  if (!conversation.memberIds?.includes(state.session.user.id)) {
+    state.conversations = state.conversations.filter((item) => item.id !== conversation.id);
+    if (state.activeConversation?.id === conversation.id) {
+      state.activeConversation = null;
+      state.messages = [];
+    }
+    return;
+  }
+  mergeConversation(conversation);
+  if (state.groupProfileConversation?.id === conversation.id) {
+    state.groupProfileConversation = {
+      ...state.groupProfileConversation,
+      ...conversation,
+    };
+  }
+  if (state.activeConversation?.id === conversation.id) {
+    state.activeConversation = {
+      ...state.activeConversation,
+      ...conversation,
+    };
+  }
+}
+
 async function submitTextMessage() {
   if (!state.activeConversation) {
     return;
@@ -1525,10 +1993,12 @@ async function submitTextMessage() {
       body: {
         type: 'text',
         text,
+        replyToMessageId: state.replyToMessageId,
       },
     });
     messageInput.value = '';
-    mergeConversation(response.conversation);
+    clearReplyTarget();
+    applyConversationUpdate(response.conversation);
     upsertMessage(response.message);
     render();
   } catch (error) {
@@ -1560,9 +2030,11 @@ async function submitImageMessage() {
         type: 'image',
         imageUrl: upload.url,
         imageName: upload.name,
+        replyToMessageId: state.replyToMessageId,
       },
     });
-    mergeConversation(response.conversation);
+    clearReplyTarget();
+    applyConversationUpdate(response.conversation);
     upsertMessage(response.message);
     render();
   } catch (error) {
@@ -1622,9 +2094,56 @@ function closeAvatarViewer() {
   avatarViewImage.removeAttribute('src');
 }
 
-function onAvatarPreviewClick(event) {
+function onDocumentClick(event) {
+  const messageMenuAction = event.target.closest('[data-message-menu-action]');
+  if (messageMenuAction) {
+    event.preventDefault();
+    const action = messageMenuAction.dataset.messageMenuAction;
+    const messageId = messageMenuAction.dataset.messageId;
+    closeMessageContextMenu();
+    if (action === 'reply') {
+      setReplyTarget(messageId);
+      return;
+    }
+    if (action === 'recall') {
+      recallMessage(messageId).catch(handleError);
+      return;
+    }
+  }
+
+  if (!event.target.closest('#message-context-menu')) {
+    closeMessageContextMenu();
+  }
+
+  const addFriendTrigger = event.target.closest('[data-add-friend-id]');
+  if (addFriendTrigger) {
+    event.preventDefault();
+    addFriend(addFriendTrigger.dataset.addFriendId).catch(handleError);
+    return;
+  }
+
+  const jumpTrigger = event.target.closest('[data-jump-message-id]');
+  if (jumpTrigger) {
+    event.preventDefault();
+    jumpToMessage(jumpTrigger.dataset.jumpMessageId);
+    return;
+  }
+
+  const kickTrigger = event.target.closest('[data-kick-member-id]');
+  if (kickTrigger) {
+    event.preventDefault();
+    removeGroupMember(kickTrigger.dataset.kickMemberId).catch(handleError);
+    return;
+  }
+
   const trigger = event.target.closest('[data-avatar-preview]');
   if (!trigger) {
+    const imageTrigger = event.target.closest('[data-image-preview]');
+    if (!imageTrigger) {
+      return;
+    }
+    event.preventDefault();
+    openAvatarViewer(imageTrigger.dataset.imageUrl, imageTrigger.dataset.imageLabel || '图片预览');
     return;
   }
 
@@ -1932,10 +2451,23 @@ function getConversationPreview(conversation) {
   if (!latest) {
     return '暂无消息';
   }
+  if (latest.isRecalled) {
+    return '一条消息已撤回';
+  }
   if (latest.type === 'image') {
     return `[图片] ${latest.imageName || '图片'}`;
   }
   return latest.text || '暂无消息';
+}
+
+function getReplyPreviewText(message) {
+  if (message.isRecalled) {
+    return '原消息已撤回';
+  }
+  if (message.type === 'image') {
+    return `[图片] ${message.imageName || '图片'}`;
+  }
+  return message.text || '消息';
 }
 
 function getConversationMeta(conversation) {
@@ -2107,16 +2639,20 @@ function showToast(message) {
 function resetToLoggedOut() {
   disconnectRealtime();
   closeAvatarCropper();
+  closeMessageContextMenu();
+  closeGroupProfile();
   state.selectedRememberedUserId = state.session?.user?.id || state.selectedRememberedUserId;
   state.manualLoginEntry = false;
   state.rememberedAccounts = loadRememberedAccounts();
   state.session = null;
   state.contacts = [];
+  state.discoverUsers = [];
   state.invites = [];
   state.adminUsers = [];
   state.conversations = [];
   state.messages = [];
   state.activeConversation = null;
+  state.replyToMessageId = null;
   saveSession(null);
   render();
 }

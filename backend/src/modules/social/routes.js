@@ -7,6 +7,19 @@ export async function registerSocialRoutes(fastify) {
     };
   });
 
+  fastify.get('/api/users/discover', { preHandler: requireAuth }, async (request) => {
+    return {
+      users: await fastify.socialService.listDiscoverableUsers(
+        request.currentUser.id,
+        request.query?.q,
+      ),
+    };
+  });
+
+  fastify.post('/api/friends', { preHandler: requireAuth }, async (request) => {
+    return fastify.socialService.addFriend(request.currentUser.id, request.body ?? {});
+  });
+
   fastify.get('/api/admin/users', { preHandler: requireAdmin }, async (request) => {
     return {
       users: await fastify.socialService.listUsersForAdmin(request.currentUser),

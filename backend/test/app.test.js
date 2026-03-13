@@ -43,8 +43,14 @@ test('register -> create direct conversation -> send message -> mark read', asyn
     password: 'password123',
   });
 
+  const addFriendResult = await socialService.addFriend(alice.user.id, {
+    userId: bob.user.id,
+  });
+  assert.equal(addFriendResult.success, true);
+
   const contacts = await socialService.listContacts(alice.user.id);
-  assert.equal(contacts.length, 2);
+  assert.equal(contacts.length, 1);
+  assert.equal(contacts[0].id, bob.user.id);
 
   const direct = await chatService.createDirectConversation(alice.user.id, bob.user.id);
   assert.equal(direct.type, 'direct');
@@ -70,6 +76,88 @@ test('register -> create direct conversation -> send message -> mark read', asyn
   const bobConversations = await chatService.listConversations(bob.user.id);
   assert.equal(bobConversations[0].name, 'Alice');
   assert.equal(bobConversations[0].unreadCount, 0);
+
+  await rm(dataDir, { recursive: true, force: true });
+});
+
+test('users can add friends, reply, recall messages, and manage group members', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
+  const store = new JsonStore(dataDir);
+  const sessionService = new SessionService('test-secret');
+  const authService = new AuthService(store, sessionService);
+  const socialService = new SocialService(store);
+  const chatService = new ChatService(store);
+
+  await authService.ensureSeedAdmin();
+  await store.write('invites', [
+    {
+      id: 'invite_test',
+      code: 'TEST-OPEN',
+      createdBy: 'user_admin',
+      maxUses: 10,
+      usedCount: 0,
+      expiresAt: '2027-01-01T00:00:00.000Z',
+      status: 'active',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    },
+  ]);
+
+  const alice = await authService.registerWithInvite({
+    inviteCode: 'TEST-OPEN',
+    nickname: 'Alice',
+    password: 'password123',
+  });
+  const bob = await authService.registerWithInvite({
+    inviteCode: 'TEST-OPEN',
+    nickname: 'Bob',
+    password: 'password123',
+  });
+  const carol = await authService.registerWithInvite({
+    inviteCode: 'TEST-OPEN',
+    nickname: 'Carol',
+    password: 'password123',
+  });
+
+  await socialService.addFriend(alice.user.id, { userId: bob.user.id });
+  await socialService.addFriend(alice.user.id, { userId: carol.user.id });
+
+  const discoverableForAlice = await socialService.listDiscoverableUsers(alice.user.id);
+  assert.equal(discoverableForAlice.length, 1);
+  assert.equal(discoverableForAlice[0].account, 'captain');
+
+  const group = await chatService.createGroupConversation(alice.user.id, {
+    name: 'Test Group',
+    memberIds: [bob.user.id, carol.user.id],
+  });
+  assert.equal(group.canManageMembers, true);
+
+  const firstMessage = await chatService.sendMessage(alice.user.id, group.id, {
+    type: 'text',
+    text: 'hello group',
+  });
+  const reply = await chatService.sendMessage(bob.user.id, group.id, {
+    type: 'text',
+    text: 'roger that',
+    replyToMessageId: firstMessage.message.id,
+  });
+  assert.equal(reply.message.replyTo.id, firstMessage.message.id);
+  assert.equal(reply.message.replyTo.sender.nickname, 'Alice');
+
+  const recalled = await chatService.recallMessage(alice.user.id, group.id, firstMessage.message.id);
+  assert.equal(recalled.message.isRecalled, true);
+
+  const afterRecall = await chatService.listMessages(carol.user.id, group.id);
+  assert.equal(afterRecall[0].isRecalled, true);
+  assert.equal(afterRecall[1].replyTo.id, firstMessage.message.id);
+  assert.equal(afterRecall[1].replyTo.isRecalled, true);
+
+  const admin = await authService.getUserById('user_admin');
+  await socialService.addFriend(alice.user.id, { userId: admin.id });
+  const expanded = await chatService.addGroupMembers(alice.user.id, group.id, [admin.id]);
+  assert.equal(expanded.members.some((member) => member.id === admin.id), true);
+
+  const trimmed = await chatService.removeGroupMember(alice.user.id, group.id, bob.user.id);
+  assert.equal(trimmed.members.some((member) => member.id === bob.user.id), false);
 
   await rm(dataDir, { recursive: true, force: true });
 });
