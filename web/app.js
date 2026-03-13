@@ -41,35 +41,26 @@ boot();
 function boot() {
   renderAuthPanel('login');
   wireEvents();
+
   if (state.session?.sessionToken) {
     hydrateApp().catch((error) => {
       resetToLoggedOut();
       handleError(error);
     });
-  } else {
-    render();
+    return;
   }
-}
 
-function resetToLoggedOut() {
-  disconnectSocket();
-  state.session = null;
-  state.contacts = [];
-  state.invites = [];
-  state.conversations = [];
-  state.messages = [];
-  state.activeConversation = null;
-  saveSession(null);
-  renderAuthPanel('login');
   render();
 }
 
 function wireEvents() {
-  logoutBtn.addEventListener('click', async () => {
+  logoutBtn.addEventListener('click', () => {
     resetToLoggedOut();
   });
 
-  refreshContactsBtn.addEventListener('click', () => hydrateSideData().catch(handleError));
+  refreshContactsBtn.addEventListener('click', () => {
+    hydrateSideData().catch(handleError);
+  });
 
   createInviteBtn.addEventListener('click', async () => {
     try {
@@ -96,6 +87,7 @@ function wireEvents() {
     event.preventDefault();
     const memberIds = [...groupMemberList.querySelectorAll('input[type="checkbox"]:checked')]
       .map((checkbox) => checkbox.value);
+
     try {
       const result = await api('/api/conversations/group', {
         method: 'POST',
@@ -118,11 +110,14 @@ function wireEvents() {
     if (!state.activeConversation) {
       return;
     }
+
     const text = messageInput.value.trim();
     if (!text) {
       return;
     }
+
     messageInput.value = '';
+
     try {
       await api(`/api/conversations/${state.activeConversation.id}/messages`, {
         method: 'POST',
@@ -146,6 +141,7 @@ function wireEvents() {
     try {
       const formData = new FormData();
       formData.append('file', file);
+
       const upload = await fetch('/api/uploads/images', {
         method: 'POST',
         headers: {
@@ -170,10 +166,95 @@ function wireEvents() {
   });
 }
 
+function resetToLoggedOut() {
+  disconnectSocket();
+  state.session = null;
+  state.contacts = [];
+  state.invites = [];
+  state.conversations = [];
+  state.messages = [];
+  state.activeConversation = null;
+  saveSession(null);
+  renderAuthPanel('login');
+  render();
+}
+
 async function hydrateApp() {
   await ensureSession();
   await Promise.all([hydrateSideData(), hydrateConversations()]);
   connectSocket();
+  render();
+}
+
+async function ensureSession() {
+  const me = await api('/api/auth/me');
+  state.session.user = me.user;
+  saveSession(state.session);
+}
+
+async function hydrateSideData() {
+  const contactsResponse = await api('/api/contacts');
+  state.contacts = contactsResponse.contacts;
+
+  if (state.session.user.isAdmin) {
+    const invitesResponse = await api('/api/invites');
+    state.invites = invitesResponse.invites;
+  } else {
+    state.invites = [];
+  }
+
+  render();
+}
+
+async function hydrateConversations() {
+  const response = await api('/api/conversations');
+  state.conversations = response.conversations;
+
+  if (state.activeConversation) {
+    const next = state.conversations.find((item) => item.id === state.activeConversation.id);
+    if (next) {
+      state.activeConversation = next;
+      await loadMessages(next.id);
+    } else {
+      state.activeConversation = null;
+      state.messages = [];
+    }
+  }
+
+  render();
+}
+
+async function selectConversation(conversationId) {
+  const conversation = state.conversations.find((item) => item.id === conversationId);
+  if (!conversation) {
+    return;
+  }
+
+  state.activeConversation = conversation;
+  await loadMessages(conversation.id);
+  render();
+}
+
+async function loadMessages(conversationId) {
+  const response = await api(`/api/conversations/${conversationId}/messages`);
+  state.messages = response.messages;
+
+  const lastMessage = state.messages.at(-1);
+  if (lastMessage) {
+    await api(`/api/conversations/${conversationId}/read`, {
+      method: 'POST',
+      body: { messageId: lastMessage.id },
+    });
+  }
+}
+
+async function refreshActiveConversation() {
+  if (!state.activeConversation) {
+    return;
+  }
+
+  await hydrateConversations();
+  await loadMessages(state.activeConversation.id);
   render();
 }
 
@@ -204,74 +285,10 @@ function stopPollingFallback() {
   state.pollingTimer = null;
 }
 
-async function ensureSession() {
-  const me = await api('/api/auth/me');
-  state.session.user = me.user;
-  saveSession(state.session);
-}
-
-async function hydrateSideData() {
-  const contactsResponse = await api('/api/contacts');
-  state.contacts = contactsResponse.contacts;
-  if (state.session.user.isAdmin) {
-    const invitesResponse = await api('/api/invites');
-    state.invites = invitesResponse.invites;
-  } else {
-    state.invites = [];
-  }
-  render();
-}
-
-async function hydrateConversations() {
-  const response = await api('/api/conversations');
-  state.conversations = response.conversations;
-  if (state.activeConversation) {
-    const next = state.conversations.find((item) => item.id === state.activeConversation.id);
-    if (next) {
-      state.activeConversation = next;
-      await loadMessages(next.id);
-    } else {
-      state.activeConversation = null;
-      state.messages = [];
-    }
-  }
-  render();
-}
-
-async function selectConversation(conversationId) {
-  const conversation = state.conversations.find((item) => item.id === conversationId);
-  if (!conversation) {
-    return;
-  }
-  state.activeConversation = conversation;
-  await loadMessages(conversation.id);
-  render();
-}
-
-async function loadMessages(conversationId) {
-  const response = await api(`/api/conversations/${conversationId}/messages`);
-  state.messages = response.messages;
-  const lastMessage = state.messages.at(-1);
-  if (lastMessage) {
-    await api(`/api/conversations/${conversationId}/read`, {
-      method: 'POST',
-      body: { messageId: lastMessage.id },
-    });
-  }
-}
-
-async function refreshActiveConversation() {
-  if (!state.activeConversation) {
-    return;
-  }
-  await hydrateConversations();
-  await loadMessages(state.activeConversation.id);
-  render();
-}
-
 function connectSocket() {
   disconnectSocket();
-  connectionStatus.textContent = '连接中...';
+  connectionStatus.textContent = '正在连接...';
+
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const socket = new WebSocket(
     `${protocol}//${location.host}/ws?token=${encodeURIComponent(state.session.sessionToken)}`,
@@ -279,11 +296,13 @@ function connectSocket() {
   state.socket = socket;
 
   socket.addEventListener('open', () => {
+    stopPollingFallback();
     connectionStatus.textContent = '实时连接已开启';
   });
 
   socket.addEventListener('close', () => {
-    connectionStatus.textContent = '连接已断开';
+    connectionStatus.textContent = '连接不稳定，已切换自动刷新';
+    startPollingFallback();
     window.setTimeout(() => {
       if (state.session?.sessionToken) {
         connectSocket();
@@ -308,6 +327,7 @@ function disconnectSocket() {
     state.socket.close();
     state.socket = null;
   }
+  stopPollingFallback();
 }
 
 function render() {
@@ -322,6 +342,7 @@ function render() {
     conversationList.innerHTML = '';
     contactsList.innerHTML = '';
     inviteList.innerHTML = '';
+    userSummary.innerHTML = '';
     chatPanel.classList.add('hidden');
     emptyState.classList.remove('hidden');
     connectionStatus.textContent = '未连接';
@@ -366,7 +387,7 @@ function renderAuthPanel(mode) {
           </form>
         `
     }
-    <p class="meta">开发管理员账号：captain / chatcircle123</p>
+    <p class="meta">管理员默认账号：captain / chatcircle123</p>
   `;
 
   authPanel.querySelectorAll('[data-mode]').forEach((button) => {
@@ -376,6 +397,7 @@ function renderAuthPanel(mode) {
   authPanel.querySelector('#login-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+
     try {
       const session = await api('/api/auth/login', {
         method: 'POST',
@@ -397,6 +419,7 @@ function renderAuthPanel(mode) {
   authPanel.querySelector('#register-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+
     try {
       const session = await api('/api/auth/register-with-invite', {
         method: 'POST',
@@ -419,6 +442,12 @@ function renderAuthPanel(mode) {
 
 function renderContacts() {
   contactsList.innerHTML = '';
+
+  if (state.contacts.length === 0) {
+    contactsList.innerHTML = '<div class="card">还没有联系人</div>';
+    return;
+  }
+
   for (const contact of state.contacts) {
     const element = document.createElement('div');
     element.className = 'contact-item';
@@ -444,12 +473,18 @@ function renderContacts() {
 
 function renderInvites() {
   inviteList.innerHTML = '';
+
+  if (state.invites.length === 0) {
+    inviteList.innerHTML = '<div class="card">还没有邀请码</div>';
+    return;
+  }
+
   for (const invite of state.invites) {
     const element = document.createElement('div');
     element.className = 'invite-item';
     element.innerHTML = `
       <div><strong>${escapeHtml(invite.code)}</strong></div>
-      <div class="meta">${invite.usedCount}/${invite.maxUses} · ${invite.status}</div>
+      <div class="meta">${invite.usedCount}/${invite.maxUses} 次 · ${invite.status}</div>
     `;
     inviteList.appendChild(element);
   }
@@ -457,6 +492,7 @@ function renderInvites() {
 
 function renderConversations() {
   conversationList.innerHTML = '';
+
   if (state.conversations.length === 0) {
     conversationList.innerHTML = '<div class="card">还没有会话</div>';
     return;
@@ -472,7 +508,9 @@ function renderConversations() {
       </div>
       <div class="meta">${escapeHtml(conversation.latestMessage?.text || conversation.latestMessage?.imageName || '还没有消息')}</div>
     `;
-    element.addEventListener('click', () => selectConversation(conversation.id).catch(handleError));
+    element.addEventListener('click', () => {
+      selectConversation(conversation.id).catch(handleError);
+    });
     conversationList.appendChild(element);
   }
 }
@@ -520,6 +558,7 @@ function renderMessages() {
 
 function renderGroupMembers() {
   groupMemberList.innerHTML = '';
+
   for (const contact of state.contacts) {
     const row = document.createElement('label');
     row.className = 'checkbox-row';
@@ -596,48 +635,4 @@ function escapeAttribute(value) {
 function formatDateTime(value) {
   const date = new Date(value);
   return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-}
-
-function connectSocket() {
-  disconnectSocket();
-  connectionStatus.textContent = '正在连接...';
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const socket = new WebSocket(
-    `${protocol}//${location.host}/ws?token=${encodeURIComponent(state.session.sessionToken)}`,
-  );
-  state.socket = socket;
-
-  socket.addEventListener('open', () => {
-    stopPollingFallback();
-    connectionStatus.textContent = '实时连接已开启';
-  });
-
-  socket.addEventListener('close', () => {
-    connectionStatus.textContent = '连接不稳定，已切换自动刷新';
-    startPollingFallback();
-    window.setTimeout(() => {
-      if (state.session?.sessionToken) {
-        connectSocket();
-      }
-    }, 2000);
-  });
-
-  socket.addEventListener('message', async (event) => {
-    const payload = JSON.parse(event.data);
-    if (payload.type === 'message.created' || payload.type === 'read.updated') {
-      await hydrateConversations();
-      if (state.activeConversation?.id === payload.payload.conversationId) {
-        await loadMessages(state.activeConversation.id);
-      }
-      render();
-    }
-  });
-}
-
-function disconnectSocket() {
-  if (state.socket) {
-    state.socket.close();
-    state.socket = null;
-  }
-  stopPollingFallback();
 }
