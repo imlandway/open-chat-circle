@@ -499,7 +499,7 @@ input[type="password"]:focus {
 
 .message-list {
   flex: none;
-  min-height: 220px;
+  min-height: 180px;
   overflow: auto;
   display: flex;
   flex-direction: column;

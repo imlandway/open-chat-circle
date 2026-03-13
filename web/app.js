@@ -305,13 +305,24 @@ function syncRememberedPassword(password) {
   saveRememberedCredentials(state.session.user.account, password, true);
 }
 
+const CHAT_HEIGHT_STORAGE_VERSION = '2';
+const DEFAULT_CHAT_LIST_HEIGHT = 280;
+
 function loadChatListHeight() {
+  const version = localStorage.getItem('open-chat-circle-chat-height-version');
+  if (version !== CHAT_HEIGHT_STORAGE_VERSION) {
+    localStorage.setItem('open-chat-circle-chat-height-version', CHAT_HEIGHT_STORAGE_VERSION);
+    localStorage.setItem('open-chat-circle-chat-height', String(DEFAULT_CHAT_LIST_HEIGHT));
+    return DEFAULT_CHAT_LIST_HEIGHT;
+  }
+
   const raw = localStorage.getItem('open-chat-circle-chat-height');
   const value = Number(raw);
-  return Number.isFinite(value) && value > 0 ? value : 420;
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_CHAT_LIST_HEIGHT;
 }
 
 function saveChatListHeight(height) {
+  localStorage.setItem('open-chat-circle-chat-height-version', CHAT_HEIGHT_STORAGE_VERSION);
   localStorage.setItem('open-chat-circle-chat-height', String(height));
 }
 
@@ -324,8 +335,8 @@ function applyChatHeight() {
   const headerHeight = chatPanel.querySelector('.chat-header')?.offsetHeight || 0;
   const composerHeight = messageForm.offsetHeight || 0;
   const resizerHeight = chatResizer.offsetHeight || 16;
-  const maxHeight = Math.max(220, panelHeight - headerHeight - composerHeight - resizerHeight - 24);
-  const nextHeight = clamp(state.chatListHeight, 220, maxHeight);
+  const maxHeight = Math.max(180, panelHeight - headerHeight - composerHeight - resizerHeight - 24);
+  const nextHeight = clamp(state.chatListHeight, 180, maxHeight);
 
   state.chatListHeight = nextHeight;
   messageList.style.height = `${nextHeight}px`;
