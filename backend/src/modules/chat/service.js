@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { assert } from '../../core/http/errors.js';
 
 const CONVERSATIONS = 'conversations';
+const FRIENDSHIPS = 'friendships';
 const MESSAGES = 'messages';
 const READ_STATES = 'readStates';
 const USERS = 'users';
@@ -17,6 +18,26 @@ function sortByCreatedAt(items) {
 
 function hasValidMembers(conversation) {
   return Array.isArray(conversation?.memberIds);
+}
+
+function getFriendIds(friendships, currentUserId) {
+  const friendIds = new Set();
+
+  for (const friendship of friendships) {
+    if (!Array.isArray(friendship?.userIds) || friendship.userIds.length !== 2) {
+      continue;
+    }
+    if (!friendship.userIds.includes(currentUserId)) {
+      continue;
+    }
+
+    const peerId = friendship.userIds.find((userId) => userId !== currentUserId);
+    if (peerId) {
+      friendIds.add(peerId);
+    }
+  }
+
+  return friendIds;
 }
 
 export class ChatService {
@@ -110,6 +131,7 @@ export class ChatService {
       id: `conv_${randomUUID()}`,
       type: 'group',
       name: name.trim(),
+      avatarUrl: '',
       memberIds: uniqueMembers,
       createdBy: userId,
       createdAt: new Date().toISOString(),
@@ -120,6 +142,29 @@ export class ChatService {
     return this.getConversationSummary(conversation.id, userId);
   }
 
+  async updateGroupConversation(userId, conversationId, { name, avatarUrl }) {
+    const conversation = await this.requireConversationMember(userId, conversationId);
+    assert(conversation.type === 'group', 400, 'Only group chats can be updated.');
+    assert(conversation.createdBy === userId, 403, 'Only the group owner can update group info.');
+
+    const conversations = await this.store.read(CONVERSATIONS);
+    const mutableConversation = conversations.find((item) => item.id === conversationId);
+    assert(mutableConversation, 404, 'Conversation not found.');
+
+    if (name !== undefined) {
+      assert(String(name).trim(), 400, 'Group name is required.');
+      mutableConversation.name = String(name).trim();
+    }
+
+    if (avatarUrl !== undefined) {
+      mutableConversation.avatarUrl = String(avatarUrl || '').trim();
+    }
+
+    mutableConversation.updatedAt = new Date().toISOString();
+    await this.store.write(CONVERSATIONS, conversations);
+    return this.getConversationDetail(userId, conversationId);
+  }
+
   async addGroupMembers(userId, conversationId, memberIds) {
     const conversation = await this.requireConversationMember(userId, conversationId);
     assert(conversation.type === 'group', 400, 'Only group chats can add members.');
@@ -128,17 +173,29 @@ export class ChatService {
     const nextIds = [...new Set(memberIds ?? [])].filter(Boolean);
     assert(nextIds.length > 0, 400, 'At least one member is required.');
 
-    const users = await this.store.read(USERS);
-    const validUsers = nextIds.every((memberId) =>
+    const candidateIds = nextIds.filter((memberId) => !conversation.memberIds.includes(memberId));
+    assert(candidateIds.length > 0, 400, 'Selected users are already in this group.');
+
+    const [users, friendships] = await Promise.all([
+      this.store.read(USERS),
+      this.store.read(FRIENDSHIPS),
+    ]);
+    const validUsers = candidateIds.every((memberId) =>
       users.some((user) => user.id === memberId && user.status === 'active'),
     );
     assert(validUsers, 400, 'One or more group members are invalid.');
+    const friendIds = getFriendIds(friendships, userId);
+    assert(
+      candidateIds.every((memberId) => friendIds.has(memberId)),
+      403,
+      'Only friends can be added to this group.',
+    );
 
     const conversations = await this.store.read(CONVERSATIONS);
     const mutableConversation = conversations.find((item) => item.id === conversationId);
     assert(mutableConversation, 404, 'Conversation not found.');
 
-    mutableConversation.memberIds = [...new Set([...mutableConversation.memberIds, ...nextIds])];
+    mutableConversation.memberIds = [...new Set([...mutableConversation.memberIds, ...candidateIds])];
     mutableConversation.updatedAt = new Date().toISOString();
     await this.store.write(CONVERSATIONS, conversations);
     return this.getConversationDetail(userId, conversationId);
@@ -423,7 +480,9 @@ export class ChatService {
       id: conversation.id,
       type: conversation.type,
       name: directPeer?.nickname || conversation.name,
-      avatarUrl: directPeer?.avatarUrl || '',
+      avatarUrl: conversation.type === 'direct'
+        ? (directPeer?.avatarUrl || '')
+        : (conversation.avatarUrl || ''),
       memberIds: conversation.memberIds,
       members: peers.map((user) => ({
         id: user.id,

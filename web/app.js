@@ -26,6 +26,8 @@ state = {
   activeConversation: null,
   replyToMessageId: null,
   groupProfileConversation: null,
+  groupMemberAddQuery: '',
+  groupSelectedAddMemberIds: [],
   messageContextMenu: null,
   realtimeSource: null,
   pollingTimer: null,
@@ -89,9 +91,12 @@ const groupProfileTitle = document.querySelector('#group-profile-title');
 const groupProfileMeta = document.querySelector('#group-profile-meta');
 const groupMemberManageList = document.querySelector('#group-member-manage-list');
 const groupMemberAddPanel = document.querySelector('#group-member-add-panel');
+const groupMemberSearchInput = document.querySelector('#group-member-search-input');
+const groupSelectedMemberList = document.querySelector('#group-selected-member-list');
 const groupAddableMemberList = document.querySelector('#group-addable-member-list');
 const submitAddGroupMembersBtn = document.querySelector('#submit-add-group-members-btn');
 const closeGroupProfileBtn = document.querySelector('#close-group-profile-btn');
+const groupAvatarInput = document.querySelector('#group-avatar-input');
 const messageContextMenu = document.querySelector('#message-context-menu');
 
 boot();
@@ -245,6 +250,23 @@ function wireStaticEvents() {
   });
   submitAddGroupMembersBtn?.addEventListener('click', async () => {
     await submitGroupMembersAdd();
+  });
+  groupMemberSearchInput?.addEventListener('input', (event) => {
+    state.groupMemberAddQuery = event.target.value || '';
+    renderGroupProfile();
+  });
+  groupAvatarInput?.addEventListener('change', async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) {
+      return;
+    }
+
+    try {
+      await updateGroupAvatar(file);
+    } catch (error) {
+      handleError(error);
+    }
   });
 
   saveAvatarBtn.addEventListener('click', async () => {
@@ -724,12 +746,17 @@ async function addFriend(userId) {
 async function openGroupProfile(conversationId) {
   const response = await api(`/api/conversations/${conversationId}`);
   state.groupProfileConversation = response.conversation;
+  state.groupMemberAddQuery = '';
+  state.groupSelectedAddMemberIds = [];
   renderGroupProfile();
+  render();
   groupProfileDialog?.showModal();
 }
 
 function closeGroupProfile() {
   state.groupProfileConversation = null;
+  state.groupMemberAddQuery = '';
+  state.groupSelectedAddMemberIds = [];
   if (groupProfileDialog?.open) {
     groupProfileDialog.close();
   }
@@ -742,18 +769,34 @@ function renderGroupProfile() {
     || !groupProfileTitle
     || !groupProfileMeta
     || !groupMemberManageList
+    || !groupSelectedMemberList
     || !groupAddableMemberList
   ) {
     return;
   }
 
   groupProfileTitle.textContent = conversation.name || '群主页';
+  const canEdit = Boolean(conversation.canManageMembers);
   groupProfileMeta.innerHTML = `
     <div class="user-card">
       <div class="user-card-main">
-        ${renderAvatar({ nickname: conversation.name, avatarUrl: conversation.avatarUrl }, 'large')}
+        <button
+          class="group-profile-avatar-btn ${canEdit ? 'is-editable' : ''}"
+          type="button"
+          aria-label="${canEdit ? '设置群头像' : '群头像'}"
+          ${canEdit ? 'data-edit-group-avatar="true"' : 'disabled'}
+        >
+          ${renderAvatar({ nickname: conversation.name, avatarUrl: conversation.avatarUrl }, 'large')}
+        </button>
         <div class="user-text">
-          <div class="user-title">${escapeHtml(conversation.name || '未命名群聊')}</div>
+          <button
+            class="group-profile-name-btn ${canEdit ? 'is-editable' : ''}"
+            type="button"
+            aria-label="${canEdit ? '设置群昵称' : '群昵称'}"
+            ${canEdit ? 'data-edit-group-name="true"' : 'disabled'}
+          >
+            ${escapeHtml(conversation.name || '未命名群聊')}
+          </button>
           <div class="meta">${escapeHtml(conversation.owner?.nickname || '未知群主')} · ${conversation.members.length} 人</div>
         </div>
       </div>
@@ -782,9 +825,78 @@ function renderGroupProfile() {
   const addableMembers = state.contacts.filter(
     (contact) => !conversation.memberIds.includes(contact.id),
   );
+  const addableMemberIds = new Set(addableMembers.map((contact) => contact.id));
+  state.groupSelectedAddMemberIds = state.groupSelectedAddMemberIds.filter(
+    (memberId) => addableMemberIds.has(memberId),
+  );
+  const selectedIds = new Set(state.groupSelectedAddMemberIds);
+  const memberQuery = state.groupMemberAddQuery.trim().toLowerCase();
+  const filteredAddableMembers = addableMembers.filter((contact) => {
+    if (!memberQuery) {
+      return true;
+    }
+    return contact.nickname.toLowerCase().includes(memberQuery)
+      || contact.account.toLowerCase().includes(memberQuery);
+  });
   groupMemberAddPanel?.classList.toggle('hidden', !conversation.canManageMembers);
+  if (groupMemberSearchInput) {
+    groupMemberSearchInput.value = state.groupMemberAddQuery;
+  }
+  groupSelectedMemberList.innerHTML = '';
   groupAddableMemberList.innerHTML = '';
-  if (conversation.canManageMembers) {
+  if (!conversation.canManageMembers) {
+    return;
+  }
+
+  if (state.groupSelectedAddMemberIds.length === 0) {
+    groupSelectedMemberList.innerHTML = '<div class="group-member-chip empty">还没有选择要拉进群的好友</div>';
+  } else {
+    for (const contact of addableMembers.filter((item) => selectedIds.has(item.id))) {
+      const chip = document.createElement('button');
+      chip.className = 'group-member-chip';
+      chip.type = 'button';
+      chip.dataset.toggleGroupMemberId = contact.id;
+      chip.innerHTML = `
+        ${renderAvatar(contact, 'xs')}
+        <span>${escapeHtml(contact.nickname)}</span>
+      `;
+      groupSelectedMemberList.appendChild(chip);
+    }
+  }
+
+  if (addableMembers.length === 0) {
+    groupAddableMemberList.innerHTML = '<div class="invite-item">没有可拉入的好友</div>';
+    return;
+  }
+
+  if (filteredAddableMembers.length === 0) {
+    groupAddableMemberList.innerHTML = '<div class="invite-item">没有找到符合搜索的好友</div>';
+    return;
+  }
+
+  for (const contact of filteredAddableMembers) {
+    const selected = selectedIds.has(contact.id);
+    const row = document.createElement('div');
+    row.className = `contact-item group-member-option ${selected ? 'is-selected' : ''}`;
+    row.innerHTML = `
+      <div class="contact-main">
+        ${renderAvatar(contact, 'small')}
+        <div class="contact-text">
+          <div class="contact-title">${escapeHtml(contact.nickname)}</div>
+          <div class="meta">@${escapeHtml(contact.account)}</div>
+        </div>
+      </div>
+      <button
+        class="${selected ? 'ghost-btn' : 'primary-btn'} group-member-option-btn"
+        type="button"
+        data-toggle-group-member-id="${escapeAttribute(contact.id)}"
+      >
+        ${selected ? '已选择' : '选择'}
+      </button>
+    `;
+    groupAddableMemberList.appendChild(row);
+  }
+  if (false && conversation.canManageMembers) {
     if (addableMembers.length === 0) {
       groupAddableMemberList.innerHTML = '<div class="invite-item">没有可拉入的好友</div>';
     } else {
@@ -804,12 +916,11 @@ function renderGroupProfile() {
 
 async function submitGroupMembersAdd() {
   const conversation = state.groupProfileConversation;
-  if (!conversation || !groupAddableMemberList) {
+  if (!conversation) {
     return;
   }
 
-  const memberIds = [...groupAddableMemberList.querySelectorAll('input[type="checkbox"]:checked')]
-    .map((checkbox) => checkbox.value);
+  const memberIds = [...state.groupSelectedAddMemberIds];
   if (memberIds.length === 0) {
     showToast('请先选择要拉入的好友');
     return;
@@ -821,7 +932,10 @@ async function submitGroupMembersAdd() {
   });
   applyConversationUpdate(response.conversation);
   state.groupProfileConversation = response.conversation;
+  state.groupMemberAddQuery = '';
+  state.groupSelectedAddMemberIds = [];
   renderGroupProfile();
+  render();
   showToast('已拉人进群');
 }
 
@@ -837,7 +951,71 @@ async function removeGroupMember(memberId) {
   applyConversationUpdate(response.conversation);
   state.groupProfileConversation = response.conversation;
   renderGroupProfile();
+  render();
   showToast('已移出群成员');
+}
+
+function toggleGroupMemberSelection(memberId) {
+  const conversation = state.groupProfileConversation;
+  if (!conversation?.canManageMembers || !memberId) {
+    return;
+  }
+
+  const nextSelection = new Set(state.groupSelectedAddMemberIds);
+  if (nextSelection.has(memberId)) {
+    nextSelection.delete(memberId);
+  } else {
+    nextSelection.add(memberId);
+  }
+
+  state.groupSelectedAddMemberIds = [...nextSelection];
+  renderGroupProfile();
+}
+
+async function updateGroupConversationInfo(payload) {
+  const conversation = state.groupProfileConversation;
+  if (!conversation) {
+    return;
+  }
+
+  const response = await api(`/api/conversations/${conversation.id}`, {
+    method: 'PATCH',
+    body: payload,
+  });
+  applyConversationUpdate(response.conversation);
+  state.groupProfileConversation = response.conversation;
+  renderGroupProfile();
+  render();
+}
+
+async function updateGroupAvatar(file) {
+  const upload = await uploadImage(file);
+  await updateGroupConversationInfo({
+    avatarUrl: upload.url,
+  });
+  showToast('群头像已更新');
+}
+
+async function promptRenameGroup() {
+  const conversation = state.groupProfileConversation;
+  if (!conversation?.canManageMembers) {
+    return;
+  }
+
+  const nextName = window.prompt('请输入新的群昵称', conversation.name || '');
+  if (nextName == null) {
+    return;
+  }
+
+  const trimmed = nextName.trim();
+  if (!trimmed || trimmed === conversation.name) {
+    return;
+  }
+
+  await updateGroupConversationInfo({
+    name: trimmed,
+  });
+  showToast('群昵称已更新');
 }
 
 function connectRealtime() {
@@ -2113,6 +2291,27 @@ function onDocumentClick(event) {
 
   if (!event.target.closest('#message-context-menu')) {
     closeMessageContextMenu();
+  }
+
+  const editGroupAvatarTrigger = event.target.closest('[data-edit-group-avatar]');
+  if (editGroupAvatarTrigger) {
+    event.preventDefault();
+    groupAvatarInput?.click();
+    return;
+  }
+
+  const editGroupNameTrigger = event.target.closest('[data-edit-group-name]');
+  if (editGroupNameTrigger) {
+    event.preventDefault();
+    promptRenameGroup().catch(handleError);
+    return;
+  }
+
+  const toggleGroupMemberTrigger = event.target.closest('[data-toggle-group-member-id]');
+  if (toggleGroupMemberTrigger) {
+    event.preventDefault();
+    toggleGroupMemberSelection(toggleGroupMemberTrigger.dataset.toggleGroupMemberId);
+    return;
   }
 
   const addFriendTrigger = event.target.closest('[data-add-friend-id]');

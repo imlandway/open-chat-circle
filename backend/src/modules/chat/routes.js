@@ -16,6 +16,25 @@ export async function registerChatRoutes(fastify) {
     };
   });
 
+  fastify.patch('/api/conversations/:conversationId', { preHandler: requireAuth }, async (request) => {
+    const conversation = await fastify.chatService.updateGroupConversation(
+      request.currentUser.id,
+      request.params.conversationId,
+      request.body ?? {},
+    );
+
+    try {
+      fastify.realtimeHub.broadcastUsers(conversation.memberIds, {
+        type: 'conversation.updated',
+        payload: conversation,
+      });
+    } catch {
+      // Group updates are best effort when realtime transport is unstable.
+    }
+
+    return { conversation };
+  });
+
   fastify.post('/api/conversations/direct', { preHandler: requireAuth }, async (request) => {
     return {
       conversation: await fastify.chatService.createDirectConversation(

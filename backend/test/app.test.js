@@ -152,12 +152,34 @@ test('users can add friends, reply, recall messages, and manage group members', 
   assert.equal(afterRecall[1].replyTo.isRecalled, true);
 
   const admin = await authService.getUserById('user_admin');
+  await assert.rejects(
+    () => chatService.addGroupMembers(alice.user.id, group.id, [admin.id]),
+    /Only friends can be added to this group/,
+  );
   await socialService.addFriend(alice.user.id, { userId: admin.id });
   const expanded = await chatService.addGroupMembers(alice.user.id, group.id, [admin.id]);
   assert.equal(expanded.members.some((member) => member.id === admin.id), true);
+  await assert.rejects(
+    () => chatService.addGroupMembers(alice.user.id, group.id, [carol.user.id]),
+    /Selected users are already in this group/,
+  );
 
   const trimmed = await chatService.removeGroupMember(alice.user.id, group.id, bob.user.id);
   assert.equal(trimmed.members.some((member) => member.id === bob.user.id), false);
+
+  const renamed = await chatService.updateGroupConversation(alice.user.id, group.id, {
+    name: 'Renamed Group',
+    avatarUrl: 'https://cdn.example.com/group-avatar.png',
+  });
+  assert.equal(renamed.name, 'Renamed Group');
+  assert.equal(renamed.avatarUrl, 'https://cdn.example.com/group-avatar.png');
+
+  await assert.rejects(
+    () => chatService.updateGroupConversation(carol.user.id, group.id, {
+      name: 'Carol Group',
+    }),
+    /Only the group owner can update group info/,
+  );
 
   await rm(dataDir, { recursive: true, force: true });
 });

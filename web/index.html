@@ -180,12 +180,26 @@
           <div class="panel-header">
             <h3>拉人进群</h3>
           </div>
+          <label class="field">
+            <span>搜索好友</span>
+            <input
+              id="group-member-search-input"
+              type="text"
+              placeholder="输入好友昵称或账号"
+              autocomplete="off"
+            />
+          </label>
+          <div class="stack">
+            <span>已选择</span>
+            <div id="group-selected-member-list" class="group-member-chip-list"></div>
+          </div>
           <div id="group-addable-member-list" class="list compact-list"></div>
           <button id="submit-add-group-members-btn" class="primary-btn" type="button">确认拉人</button>
         </div>
       </div>
     </dialog>
 
+    <input id="group-avatar-input" type="file" accept="image/*" hidden />
     <div id="toast" class="toast hidden"></div>
     <div id="message-context-menu" class="message-context-menu hidden"></div>
     <script src="/app/app.js" type="module"></script>

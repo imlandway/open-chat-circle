@@ -852,6 +852,77 @@ dialog::backdrop {
   width: 100%;
 }
 
+.group-member-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.group-member-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(17, 17, 17, 0.08);
+  background: rgba(255, 255, 255, 0.96);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+}
+
+.group-member-chip.empty {
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.6);
+  box-shadow: none;
+}
+
+.group-member-option {
+  cursor: default;
+}
+
+.group-member-option.is-selected {
+  border-color: rgba(17, 17, 17, 0.12);
+  background: rgba(255, 255, 255, 0.98);
+}
+
+.group-member-option-btn {
+  min-width: 74px;
+}
+
+.group-profile-avatar-btn,
+.group-profile-name-btn {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.group-profile-avatar-btn.is-editable,
+.group-profile-name-btn.is-editable {
+  cursor: pointer;
+}
+
+.group-profile-avatar-btn.is-editable .avatar,
+.group-profile-name-btn.is-editable {
+  transition: transform 120ms ease, opacity 120ms ease;
+}
+
+.group-profile-avatar-btn.is-editable:hover .avatar,
+.group-profile-name-btn.is-editable:hover {
+  opacity: 0.82;
+  transform: translateY(-1px);
+}
+
+.group-profile-name-btn {
+  font-size: 18px;
+  font-weight: 600;
+  text-align: left;
+}
+
 .toast {
   position: fixed;
   right: 20px;
