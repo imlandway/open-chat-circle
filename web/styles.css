@@ -568,10 +568,14 @@ input[type="password"]:focus {
 }
 
 .empty-state {
+  width: 100%;
   display: grid;
   place-items: center;
   text-align: center;
   gap: 8px;
+  align-content: center;
+  justify-items: center;
+  padding: 24px;
 }
 
 dialog {
