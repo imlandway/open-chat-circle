@@ -2,7 +2,7 @@ const state = {
   session: loadSession(),
   authMode: 'login',
   navSection: 'conversations',
-  mineSection: 'profile',
+  mineSection: null,
   contacts: [],
   invites: [],
   adminUsers: [],
@@ -831,7 +831,9 @@ function renderUserSummary() {
 
   userSummary.querySelectorAll('[data-mine-section]').forEach((button) => {
     button.addEventListener('click', () => {
-      state.mineSection = button.dataset.mineSection;
+      state.mineSection = state.mineSection === button.dataset.mineSection
+        ? null
+        : button.dataset.mineSection;
       renderUserSummary();
     });
   });
