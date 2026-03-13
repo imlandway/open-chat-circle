@@ -103,3 +103,8 @@ flutter run --dart-define=API_BASE_URL=http://localhost:8787
 - 使用 JWT + 刷新令牌
 - 把图片真实上传到 MinIO / S3 / COS，而不是只记录元数据
 - 为 WebSocket 增加多实例广播层
+## Sealos Image
+
+If Sealos asks for an image name, use:
+
+`ghcr.io/imlandway/open-chat-circle-backend:latest`
