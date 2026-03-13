@@ -6,6 +6,7 @@ const state = {
   messages: [],
   activeConversation: null,
   socket: null,
+  pollingTimer: null,
 };
 
 const authPanel = document.querySelector('#auth-panel');
@@ -166,6 +167,33 @@ async function hydrateApp() {
   await Promise.all([hydrateSideData(), hydrateConversations()]);
   connectSocket();
   render();
+}
+
+function startPollingFallback() {
+  if (state.pollingTimer || !state.session?.sessionToken) {
+    return;
+  }
+
+  state.pollingTimer = window.setInterval(async () => {
+    try {
+      await hydrateConversations();
+      if (state.activeConversation) {
+        await loadMessages(state.activeConversation.id);
+      }
+      render();
+    } catch (error) {
+      console.error(error);
+    }
+  }, 4000);
+}
+
+function stopPollingFallback() {
+  if (!state.pollingTimer) {
+    return;
+  }
+
+  window.clearInterval(state.pollingTimer);
+  state.pollingTimer = null;
 }
 
 async function ensureSession() {
@@ -560,4 +588,48 @@ function escapeAttribute(value) {
 function formatDateTime(value) {
   const date = new Date(value);
   return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function connectSocket() {
+  disconnectSocket();
+  connectionStatus.textContent = '正在连接...';
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const socket = new WebSocket(
+    `${protocol}//${location.host}/ws?token=${encodeURIComponent(state.session.sessionToken)}`,
+  );
+  state.socket = socket;
+
+  socket.addEventListener('open', () => {
+    stopPollingFallback();
+    connectionStatus.textContent = '实时连接已开启';
+  });
+
+  socket.addEventListener('close', () => {
+    connectionStatus.textContent = '连接不稳定，已切换自动刷新';
+    startPollingFallback();
+    window.setTimeout(() => {
+      if (state.session?.sessionToken) {
+        connectSocket();
+      }
+    }, 2000);
+  });
+
+  socket.addEventListener('message', async (event) => {
+    const payload = JSON.parse(event.data);
+    if (payload.type === 'message.created' || payload.type === 'read.updated') {
+      await hydrateConversations();
+      if (state.activeConversation?.id === payload.payload.conversationId) {
+        await loadMessages(state.activeConversation.id);
+      }
+      render();
+    }
+  });
+}
+
+function disconnectSocket() {
+  if (state.socket) {
+    state.socket.close();
+    state.socket = null;
+  }
+  stopPollingFallback();
 }
