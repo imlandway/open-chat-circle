@@ -142,3 +142,70 @@ test('web app entry is served from /app/', async () => {
 
   await app.close();
 });
+
+test('users can update profile and password while admins can list users and reset passwords', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
+  const store = new JsonStore(dataDir);
+  const sessionService = new SessionService('test-secret');
+  const authService = new AuthService(store, sessionService);
+  const socialService = new SocialService(store);
+
+  await authService.ensureSeedAdmin();
+  await store.write('invites', [
+    {
+      id: 'invite_test',
+      code: 'TEST-OPEN',
+      createdBy: 'user_admin',
+      maxUses: 10,
+      usedCount: 0,
+      expiresAt: '2027-01-01T00:00:00.000Z',
+      status: 'active',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    },
+  ]);
+
+  const aliceSession = await authService.registerWithInvite({
+    inviteCode: 'TEST-OPEN',
+    nickname: 'Alice',
+    password: 'password123',
+  });
+
+  const updatedUser = await socialService.updateProfile(aliceSession.user.id, {
+    nickname: 'Alice New',
+    account: 'alice_new',
+    avatarUrl: '/uploads/alice.png',
+  });
+
+  assert.equal(updatedUser.nickname, 'Alice New');
+  assert.equal(updatedUser.account, 'alice_new');
+  assert.equal(updatedUser.avatarUrl, '/uploads/alice.png');
+
+  const changed = await authService.changePassword(aliceSession.user.id, {
+    currentPassword: 'password123',
+    newPassword: 'newpassword123',
+  });
+  assert.equal(changed.success, true);
+
+  const relogin = await authService.loginWithPassword({
+    account: 'alice_new',
+    password: 'newpassword123',
+  });
+  assert.equal(relogin.user.account, 'alice_new');
+
+  const admin = await authService.getUserById('user_admin');
+  const users = await socialService.listUsersForAdmin(admin);
+  assert.equal(users.some((user) => user.account === 'alice_new'), true);
+
+  const resetResult = await authService.resetPassword(admin, aliceSession.user.id, {
+    newPassword: 'resetpass123',
+  });
+  assert.equal(resetResult.success, true);
+
+  const resetLogin = await authService.loginWithPassword({
+    account: 'alice_new',
+    password: 'resetpass123',
+  });
+  assert.equal(resetLogin.user.nickname, 'Alice New');
+
+  await rm(dataDir, { recursive: true, force: true });
+});

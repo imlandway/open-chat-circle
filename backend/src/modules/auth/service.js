@@ -13,6 +13,13 @@ function sanitizeNickname(nickname) {
     .slice(0, 12);
 }
 
+function normalizeAccount(account) {
+  return String(account ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, '');
+}
+
 export class AuthService {
   constructor(store, sessionService) {
     this.store = store;
@@ -98,7 +105,8 @@ export class AuthService {
     assert(password?.trim(), 400, 'Password is required.');
 
     const users = await this.store.read(USERS);
-    const user = users.find((item) => item.account === account.trim());
+    const normalizedAccount = normalizeAccount(account);
+    const user = users.find((item) => item.account === normalizedAccount);
 
     assert(user, 404, 'Account not found.');
     assert(user.status === 'active', 403, 'This account is banned.');
@@ -108,6 +116,45 @@ export class AuthService {
     }
 
     return this.createSessionPayload(user);
+  }
+
+  async changePassword(userId, { currentPassword, newPassword }) {
+    assert(currentPassword?.trim(), 400, 'Current password is required.');
+    assert(newPassword?.length >= 8, 400, 'New password must be at least 8 characters.');
+
+    const users = await this.store.read(USERS);
+    const user = users.find((item) => item.id === userId);
+
+    assert(user, 404, 'User not found.');
+    if (!verifyPassword(currentPassword, user.passwordHash)) {
+      throw new AppError(401, 'Current password is incorrect.');
+    }
+
+    user.passwordHash = hashPassword(newPassword);
+    await this.store.write(USERS, users);
+
+    return {
+      success: true,
+      user: this.toSafeUser(user),
+    };
+  }
+
+  async resetPassword(actor, targetUserId, { newPassword }) {
+    assert(actor?.isAdmin, 403, 'Only admins can reset passwords.');
+    assert(targetUserId, 400, 'Target user is required.');
+    assert(newPassword?.length >= 8, 400, 'New password must be at least 8 characters.');
+
+    const users = await this.store.read(USERS);
+    const target = users.find((item) => item.id === targetUserId);
+
+    assert(target, 404, 'Target user not found.');
+    target.passwordHash = hashPassword(newPassword);
+    await this.store.write(USERS, users);
+
+    return {
+      success: true,
+      user: this.toSafeUser(target),
+    };
   }
 
   createSessionPayload(user) {

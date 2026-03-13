@@ -3,6 +3,7 @@ const state = {
   authMode: 'login',
   contacts: [],
   invites: [],
+  adminUsers: [],
   conversations: [],
   messages: [],
   activeConversation: null,
@@ -25,6 +26,7 @@ const chatAvatar = document.querySelector('#chat-avatar');
 const userSummary = document.querySelector('#user-summary');
 const contactsList = document.querySelector('#contacts-list');
 const inviteList = document.querySelector('#invite-list');
+const adminUserList = document.querySelector('#admin-user-list');
 const connectionStatus = document.querySelector('#connection-status');
 const createGroupBtn = document.querySelector('#create-group-btn');
 const logoutBtn = document.querySelector('#logout-btn');
@@ -142,6 +144,7 @@ function wireStaticEvents() {
         method: 'PATCH',
         body: {
           nickname: state.session.user.nickname,
+          account: state.session.user.account,
           avatarUrl: upload.url,
         },
       });
@@ -235,6 +238,24 @@ function loadRememberedCredentials() {
   }
 }
 
+function syncRememberedAccount(account) {
+  const remembered = loadRememberedCredentials();
+  if (!remembered) {
+    return;
+  }
+
+  saveRememberedCredentials(account, remembered.password, true);
+}
+
+function syncRememberedPassword(password) {
+  const remembered = loadRememberedCredentials();
+  if (!remembered) {
+    return;
+  }
+
+  saveRememberedCredentials(state.session.user.account, password, true);
+}
+
 async function hydrateApp() {
   await ensureSession();
   await Promise.all([hydrateSideData(), hydrateConversations()]);
@@ -253,10 +274,15 @@ async function hydrateSideData() {
   state.contacts = contactsResponse.contacts;
 
   if (state.session.user.isAdmin) {
-    const invitesResponse = await api('/api/invites');
+    const [invitesResponse, usersResponse] = await Promise.all([
+      api('/api/invites'),
+      api('/api/admin/users'),
+    ]);
     state.invites = invitesResponse.invites;
+    state.adminUsers = usersResponse.users;
   } else {
     state.invites = [];
+    state.adminUsers = [];
   }
 
   render();
@@ -448,6 +474,7 @@ function render() {
     conversationList.innerHTML = '';
     contactsList.innerHTML = '';
     inviteList.innerHTML = '';
+    adminUserList.innerHTML = '';
     userSummary.innerHTML = '';
     chatAvatar.innerHTML = '';
     chatPanel.classList.add('hidden');
@@ -459,6 +486,7 @@ function render() {
   renderUserSummary();
   renderContacts();
   renderInvites();
+  renderAdminUsers();
   renderConversations();
   renderMessages();
 }
@@ -571,19 +599,51 @@ function renderAuthPanel() {
 function renderUserSummary() {
   const user = state.session.user;
   userSummary.innerHTML = `
-    <div class="user-card">
-      <div class="user-card-main">
-        ${renderAvatar(user, 'large')}
-        <div class="user-text">
-          <div class="user-title">${escapeHtml(user.nickname)}</div>
-          <div class="meta">@${escapeHtml(user.account)}</div>
+    <div class="stack">
+      <div class="user-card">
+        <div class="user-card-main">
+          ${renderAvatar(user, 'large')}
+          <div class="user-text">
+            <div class="user-title">${escapeHtml(user.nickname)}</div>
+            <div class="meta">@${escapeHtml(user.account)}</div>
+            <div class="meta">${user.isAdmin ? '管理员' : '成员'}</div>
+          </div>
+        </div>
+        <div class="stack profile-actions">
+          <label class="ghost-btn" for="user-avatar-input">更换头像</label>
+          <input id="user-avatar-input" type="file" accept="image/*" hidden />
         </div>
       </div>
-      <div class="stack">
-        <label class="ghost-btn" for="user-avatar-input">更换头像</label>
-        <input id="user-avatar-input" type="file" accept="image/*" hidden />
-        <span class="meta">${user.isAdmin ? '管理员' : '成员'}</span>
-      </div>
+
+      <form id="profile-form" class="stack form-card">
+        <div class="section-title">资料设置</div>
+        <label class="field">
+          <span>昵称</span>
+          <input name="nickname" type="text" value="${escapeAttribute(user.nickname)}" required />
+        </label>
+        <label class="field">
+          <span>账号</span>
+          <input name="account" type="text" value="${escapeAttribute(user.account)}" minlength="3" required />
+        </label>
+        <button class="primary-btn" type="submit">保存资料</button>
+      </form>
+
+      <form id="password-form" class="stack form-card">
+        <div class="section-title">密码设置</div>
+        <label class="field">
+          <span>当前密码</span>
+          <input name="currentPassword" type="password" required />
+        </label>
+        <label class="field">
+          <span>新密码</span>
+          <input name="newPassword" type="password" minlength="8" required />
+        </label>
+        <label class="field">
+          <span>确认新密码</span>
+          <input name="confirmPassword" type="password" minlength="8" required />
+        </label>
+        <button class="primary-btn" type="submit">修改密码</button>
+      </form>
     </div>
   `;
 
@@ -596,6 +656,58 @@ function renderUserSummary() {
 
     try {
       await openAvatarCropper(file);
+    } catch (error) {
+      handleError(error);
+    }
+  });
+
+  userSummary.querySelector('#profile-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+
+    try {
+      const response = await api('/api/users/me', {
+        method: 'PATCH',
+        body: {
+          nickname: form.get('nickname'),
+          account: form.get('account'),
+          avatarUrl: state.session.user.avatarUrl,
+        },
+      });
+      state.session.user = response.user;
+      saveSession(state.session);
+      syncRememberedAccount(response.user.account);
+      await Promise.all([hydrateSideData(), hydrateConversations()]);
+      render();
+      showToast('资料已更新');
+    } catch (error) {
+      handleError(error);
+    }
+  });
+
+  userSummary.querySelector('#password-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const currentPassword = String(form.get('currentPassword') || '');
+    const newPassword = String(form.get('newPassword') || '');
+    const confirmPassword = String(form.get('confirmPassword') || '');
+
+    if (newPassword !== confirmPassword) {
+      showToast('两次输入的新密码不一致');
+      return;
+    }
+
+    try {
+      await api('/api/auth/password', {
+        method: 'PATCH',
+        body: {
+          currentPassword,
+          newPassword,
+        },
+      });
+      syncRememberedPassword(newPassword);
+      event.currentTarget.reset();
+      showToast('密码已更新');
     } catch (error) {
       handleError(error);
     }
@@ -659,6 +771,63 @@ function renderInvites() {
     `;
     inviteList.appendChild(card);
   }
+}
+
+function renderAdminUsers() {
+  adminUserList.innerHTML = '';
+
+  if (!state.session?.user?.isAdmin) {
+    return;
+  }
+
+  if (state.adminUsers.length === 0) {
+    adminUserList.innerHTML = '<div class="invite-item">还没有用户</div>';
+    return;
+  }
+
+  for (const user of state.adminUsers) {
+    const card = document.createElement('div');
+    card.className = 'admin-user-item';
+    card.innerHTML = `
+      <div class="contact-main">
+        ${renderAvatar(user)}
+        <div class="contact-text">
+          <div class="contact-title">${escapeHtml(user.nickname)}</div>
+          <div class="meta">@${escapeHtml(user.account)}</div>
+          <div class="meta">${user.isAdmin ? '管理员' : '成员'} · ${escapeHtml(user.status)}</div>
+        </div>
+      </div>
+      <div class="inline-actions">
+        ${user.id === state.session.user.id ? '<span class="status-pill">当前登录</span>' : ''}
+        <button class="ghost-btn" type="button" data-reset-user-id="${escapeAttribute(user.id)}">重置密码</button>
+      </div>
+    `;
+    adminUserList.appendChild(card);
+  }
+
+  adminUserList.querySelectorAll('[data-reset-user-id]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const targetUserId = button.dataset.resetUserId;
+      const target = state.adminUsers.find((user) => user.id === targetUserId);
+      const newPassword = window.prompt(`给 ${target?.nickname || '该用户'} 设置新密码（至少 8 位）`);
+
+      if (!newPassword) {
+        return;
+      }
+
+      try {
+        await api(`/api/admin/users/${targetUserId}/reset-password`, {
+          method: 'POST',
+          body: {
+            newPassword,
+          },
+        });
+        showToast(`已重置 ${target?.account || '该用户'} 的密码`);
+      } catch (error) {
+        handleError(error);
+      }
+    });
+  });
 }
 
 function renderConversations() {
@@ -1339,6 +1508,7 @@ function resetToLoggedOut() {
   state.session = null;
   state.contacts = [];
   state.invites = [];
+  state.adminUsers = [];
   state.conversations = [];
   state.messages = [];
   state.activeConversation = null;

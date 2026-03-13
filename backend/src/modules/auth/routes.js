@@ -14,4 +14,8 @@ export async function registerAuthRoutes(fastify) {
       user: fastify.authService.toSafeUser(request.currentUser),
     };
   });
+
+  fastify.patch('/api/auth/password', { preHandler: requireAuth }, async (request) => {
+    return fastify.authService.changePassword(request.currentUser.id, request.body);
+  });
 }

@@ -103,11 +103,18 @@ dialog {
 .user-card,
 .conversation-item,
 .contact-item,
-.invite-item {
+.invite-item,
+.admin-user-item,
+.inline-actions {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+}
+
+.sub-panel-header {
+  margin-top: 18px;
+  margin-bottom: 10px;
 }
 
 .topbar {
@@ -142,7 +149,9 @@ dialog {
 .conversation-item,
 .contact-item,
 .invite-item,
-.user-card {
+.user-card,
+.admin-user-item,
+.form-card {
   padding: 14px 16px;
   border-radius: 18px;
 }
@@ -178,6 +187,32 @@ dialog {
 .contact-text,
 .user-text {
   min-width: 0;
+}
+
+.form-card {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(15, 118, 110, 0.12);
+}
+
+.section-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.profile-actions {
+  align-items: flex-end;
+}
+
+.admin-user-item {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  box-shadow: var(--shadow);
+}
+
+.inline-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .conversation-title,

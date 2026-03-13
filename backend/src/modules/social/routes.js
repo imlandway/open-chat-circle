@@ -7,6 +7,12 @@ export async function registerSocialRoutes(fastify) {
     };
   });
 
+  fastify.get('/api/admin/users', { preHandler: requireAdmin }, async (request) => {
+    return {
+      users: await fastify.socialService.listUsersForAdmin(request.currentUser),
+    };
+  });
+
   fastify.get('/api/invites', { preHandler: requireAdmin }, async (request) => {
     return {
       invites: await fastify.socialService.listInvites(request.currentUser),
@@ -23,6 +29,10 @@ export async function registerSocialRoutes(fastify) {
     return {
       user: await fastify.socialService.updateProfile(request.currentUser.id, request.body),
     };
+  });
+
+  fastify.post('/api/admin/users/:userId/reset-password', { preHandler: requireAdmin }, async (request) => {
+    return fastify.authService.resetPassword(request.currentUser, request.params.userId, request.body);
   });
 
   fastify.post('/api/admin/users/:userId/ban', { preHandler: requireAdmin }, async (request) => {
