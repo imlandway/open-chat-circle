@@ -197,7 +197,12 @@ function loadSession() {
   }
 
   try {
-    return JSON.parse(raw);
+    const session = JSON.parse(raw);
+    if (session?.expiresAt && new Date(session.expiresAt).getTime() < Date.now()) {
+      localStorage.removeItem('open-chat-circle-session');
+      return null;
+    }
+    return session;
   } catch {
     localStorage.removeItem('open-chat-circle-session');
     return null;
@@ -209,7 +214,12 @@ function saveSession(session) {
     localStorage.removeItem('open-chat-circle-session');
     return;
   }
-  localStorage.setItem('open-chat-circle-session', JSON.stringify(session));
+  const expiresAt = session.expiresAt
+    ?? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+  localStorage.setItem('open-chat-circle-session', JSON.stringify({
+    ...session,
+    expiresAt,
+  }));
 }
 
 function saveRememberedCredentials(account, password, remember) {
@@ -600,7 +610,7 @@ function renderUserSummary() {
   const user = state.session.user;
   userSummary.innerHTML = `
     <div class="stack">
-      <div class="user-card">
+      <div class="user-card profile-hero">
         <div class="user-card-main">
           ${renderAvatar(user, 'large')}
           <div class="user-text">
@@ -610,7 +620,7 @@ function renderUserSummary() {
           </div>
         </div>
         <div class="stack profile-actions">
-          <label class="ghost-btn" for="user-avatar-input">更换头像</label>
+          <label class="ghost-btn profile-avatar-btn" for="user-avatar-input">修改头像</label>
           <input id="user-avatar-input" type="file" accept="image/*" hidden />
         </div>
       </div>
