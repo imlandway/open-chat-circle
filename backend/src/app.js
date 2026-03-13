@@ -147,6 +147,7 @@ export async function buildApp() {
       });
     }
 
+    console.error(error);
     request.log.error(error);
     return reply.code(500).send({
       message: 'Internal server error.',

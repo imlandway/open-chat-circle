@@ -42,10 +42,14 @@ export async function registerChatRoutes(fastify) {
       request.body,
     );
 
-    fastify.realtimeHub.broadcastUsers(result.conversation.memberIds, {
-      type: 'message.created',
-      payload: result.message,
-    });
+    try {
+      fastify.realtimeHub.broadcastUsers(result.conversation.memberIds, {
+        type: 'message.created',
+        payload: result.message,
+      });
+    } catch {
+      // The message is already persisted; realtime fanout should not break send.
+    }
 
     return result;
   });
@@ -57,11 +61,15 @@ export async function registerChatRoutes(fastify) {
       request.body?.messageId,
     );
 
-    const members = await fastify.chatService.getConversationMembers(request.params.conversationId);
-    fastify.realtimeHub.broadcastUsers(members, {
-      type: 'read.updated',
-      payload: receipt,
-    });
+    try {
+      const members = await fastify.chatService.getConversationMembers(request.params.conversationId);
+      fastify.realtimeHub.broadcastUsers(members, {
+        type: 'read.updated',
+        payload: receipt,
+      });
+    } catch {
+      // Read receipts are best effort when realtime transport is unstable.
+    }
 
     return receipt;
   });
