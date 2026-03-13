@@ -422,6 +422,80 @@ dialog {
   background: #505050;
 }
 
+.remembered-section {
+  margin-bottom: 14px;
+}
+
+.remembered-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.remembered-reset {
+  min-height: 34px;
+  padding: 6px 12px;
+}
+
+.remembered-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.remembered-account {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.76);
+  color: inherit;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  text-align: left;
+}
+
+.remembered-account:hover {
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.remembered-account.selected {
+  border-color: rgba(7, 193, 96, 0.28);
+  background: var(--accent-soft);
+}
+
+.remembered-account-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.remembered-account-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.remembered-account-copy strong,
+.remembered-account-copy .meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remembered-account-note {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .field {
   display: flex;
   flex-direction: column;
@@ -792,5 +866,14 @@ dialog::backdrop {
   .avatar-crop-stage {
     width: min(78vw, 340px);
     height: min(78vw, 340px);
+  }
+
+  .remembered-account {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .remembered-account-note {
+    white-space: normal;
   }
 }

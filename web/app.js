@@ -1,8 +1,19 @@
 const CHAT_HEIGHT_STORAGE_VERSION = '2';
 const DEFAULT_CHAT_LIST_HEIGHT = 280;
+const REMEMBERED_ACCOUNTS_KEY = 'open-chat-circle-remembered-accounts';
+const LEGACY_REMEMBERED_KEY = 'open-chat-circle-remembered';
+const MAX_REMEMBERED_ACCOUNTS = 8;
 
-const state = {
-  session: loadSession(),
+let state;
+
+const initialSession = loadSession();
+const initialRememberedAccounts = loadRememberedAccounts();
+
+state = {
+  session: initialSession,
+  rememberedAccounts: initialRememberedAccounts,
+  selectedRememberedUserId: initialSession?.user?.id || null,
+  manualLoginEntry: false,
   authMode: 'login',
   navSection: 'conversations',
   mineSection: null,
@@ -273,48 +284,182 @@ function saveSession(session) {
   }));
 }
 
-function saveRememberedCredentials(account, password, remember) {
-  if (!remember) {
-    localStorage.removeItem('open-chat-circle-remembered');
-    return;
+function loadRememberedAccounts() {
+  const raw = localStorage.getItem(REMEMBERED_ACCOUNTS_KEY);
+  if (raw) {
+    try {
+      const accounts = JSON.parse(raw);
+      if (!Array.isArray(accounts)) {
+        throw new Error('Remembered accounts should be an array.');
+      }
+      return accounts
+        .map(normalizeRememberedAccount)
+        .filter(Boolean)
+        .sort((left, right) => new Date(right.lastUsedAt).getTime() - new Date(left.lastUsedAt).getTime());
+    } catch {
+      localStorage.removeItem(REMEMBERED_ACCOUNTS_KEY);
+    }
   }
 
-  localStorage.setItem('open-chat-circle-remembered', JSON.stringify({
-    account,
-    password,
-  }));
-}
-
-function loadRememberedCredentials() {
-  const raw = localStorage.getItem('open-chat-circle-remembered');
-  if (!raw) {
-    return null;
+  const legacyRaw = localStorage.getItem(LEGACY_REMEMBERED_KEY);
+  if (!legacyRaw) {
+    return [];
   }
 
   try {
-    return JSON.parse(raw);
+    const legacyRemembered = JSON.parse(legacyRaw);
+    if (!legacyRemembered?.account) {
+      throw new Error('Legacy remembered account is missing account.');
+    }
+
+    const migratedAccounts = [
+      normalizeRememberedAccount({
+        userId: `legacy:${legacyRemembered.account}`,
+        account: legacyRemembered.account,
+        nickname: legacyRemembered.account,
+        avatarUrl: '',
+        isAdmin: false,
+        password: legacyRemembered.password || '',
+        lastUsedAt: new Date().toISOString(),
+      }),
+    ].filter(Boolean);
+
+    saveRememberedAccounts(migratedAccounts);
+    return migratedAccounts;
   } catch {
-    localStorage.removeItem('open-chat-circle-remembered');
+    localStorage.removeItem(LEGACY_REMEMBERED_KEY);
+    return [];
+  }
+}
+
+function normalizeRememberedAccount(account) {
+  if (!account?.account) {
     return null;
   }
+
+  return {
+    userId: String(account.userId || `legacy:${account.account}`),
+    account: String(account.account || '').trim(),
+    nickname: String(account.nickname || account.account || '').trim(),
+    avatarUrl: String(account.avatarUrl || ''),
+    isAdmin: Boolean(account.isAdmin),
+    password: String(account.password || ''),
+    lastUsedAt: account.lastUsedAt || new Date().toISOString(),
+  };
+}
+
+function saveRememberedAccounts(accounts) {
+  const normalized = accounts
+    .map(normalizeRememberedAccount)
+    .filter(Boolean)
+    .sort((left, right) => new Date(right.lastUsedAt).getTime() - new Date(left.lastUsedAt).getTime())
+    .slice(0, MAX_REMEMBERED_ACCOUNTS);
+
+  if (normalized.length === 0) {
+    localStorage.removeItem(REMEMBERED_ACCOUNTS_KEY);
+    localStorage.removeItem(LEGACY_REMEMBERED_KEY);
+    if (state) {
+      state.rememberedAccounts = [];
+    }
+    return;
+  }
+
+  localStorage.setItem(REMEMBERED_ACCOUNTS_KEY, JSON.stringify(normalized));
+  localStorage.removeItem(LEGACY_REMEMBERED_KEY);
+  if (state) {
+    state.rememberedAccounts = normalized;
+  }
+}
+
+function rememberAccountFromSession(session, { password = '', rememberPassword = false } = {}) {
+  if (!session?.user?.account) {
+    return;
+  }
+
+  const nextAccount = normalizeRememberedAccount({
+    userId: session.user.id,
+    account: session.user.account,
+    nickname: session.user.nickname,
+    avatarUrl: session.user.avatarUrl,
+    isAdmin: session.user.isAdmin,
+    password: rememberPassword ? password : '',
+    lastUsedAt: new Date().toISOString(),
+  });
+
+  const accounts = loadRememberedAccounts().filter(
+    (item) => item.userId !== nextAccount.userId && item.account !== nextAccount.account,
+  );
+  saveRememberedAccounts([nextAccount, ...accounts]);
+  state.selectedRememberedUserId = nextAccount.userId;
+  state.manualLoginEntry = false;
+}
+
+function getSelectedRememberedAccount() {
+  if (state.manualLoginEntry || state.rememberedAccounts.length === 0) {
+    return null;
+  }
+
+  if (state.selectedRememberedUserId) {
+    const selected = state.rememberedAccounts.find((item) => item.userId === state.selectedRememberedUserId);
+    if (selected) {
+      return selected;
+    }
+  }
+
+  return state.rememberedAccounts[0] || null;
 }
 
 function syncRememberedAccount(account) {
-  const remembered = loadRememberedCredentials();
-  if (!remembered) {
+  if (!state.session?.user?.id) {
     return;
   }
 
-  saveRememberedCredentials(account, remembered.password, true);
+  const accounts = loadRememberedAccounts();
+  const current = accounts.find((item) => item.userId === state.session.user.id);
+  if (!current) {
+    return;
+  }
+
+  saveRememberedAccounts(accounts.map((item) => {
+    if (item.userId !== state.session.user.id) {
+      return item;
+    }
+
+    return {
+      ...item,
+      account,
+      nickname: state.session.user.nickname,
+      avatarUrl: state.session.user.avatarUrl,
+      isAdmin: state.session.user.isAdmin,
+      lastUsedAt: new Date().toISOString(),
+    };
+  }));
+  state.selectedRememberedUserId = state.session.user.id;
 }
 
 function syncRememberedPassword(password) {
-  const remembered = loadRememberedCredentials();
-  if (!remembered) {
+  if (!state.session?.user?.id) {
     return;
   }
 
-  saveRememberedCredentials(state.session.user.account, password, true);
+  const accounts = loadRememberedAccounts();
+  const current = accounts.find((item) => item.userId === state.session.user.id);
+  if (!current || !current.password) {
+    return;
+  }
+
+  saveRememberedAccounts(accounts.map((item) => {
+    if (item.userId !== state.session.user.id) {
+      return item;
+    }
+
+    return {
+      ...item,
+      password,
+      lastUsedAt: new Date().toISOString(),
+    };
+  }));
+  state.selectedRememberedUserId = state.session.user.id;
 }
 
 function loadChatListHeight() {
@@ -672,7 +817,14 @@ function getMineSectionLabel(section) {
 }
 
 function renderAuthPanel() {
-  const remembered = loadRememberedCredentials();
+  state.rememberedAccounts = loadRememberedAccounts();
+  const remembered = getSelectedRememberedAccount();
+  const accountValue = remembered?.account || '';
+  const passwordValue = remembered?.password || '';
+  const rememberedCards = state.rememberedAccounts
+    .map((account) => renderRememberedAccountOption(account, remembered?.userId === account.userId))
+    .join('');
+
   authPanel.innerHTML = `
     <div class="auth-tabs">
       <button class="auth-tab ghost-btn ${state.authMode === 'login' ? 'active' : ''}" type="button" data-auth-mode="login">登录</button>
@@ -681,17 +833,40 @@ function renderAuthPanel() {
     ${
       state.authMode === 'login'
         ? `
+          ${
+            state.rememberedAccounts.length > 0
+              ? `
+                <div class="remembered-section stack">
+                  <div class="remembered-header">
+                    <span class="section-title">选择曾登录账号</span>
+                    <button class="ghost-btn remembered-reset" type="button" data-clear-remembered-selection>
+                      使用其他账号
+                    </button>
+                  </div>
+                  <div class="remembered-list">
+                    ${rememberedCards}
+                  </div>
+                </div>
+              `
+              : ''
+          }
           <form id="login-form" class="auth-form stack">
             <label class="field">
               <span>账号</span>
-              <input name="account" type="text" value="${escapeAttribute(remembered?.account || '')}" required />
+              <input
+                name="account"
+                type="text"
+                value="${escapeAttribute(accountValue)}"
+                ${remembered ? 'readonly' : ''}
+                required
+              />
             </label>
             <label class="field">
               <span>密码</span>
-              <input name="password" type="password" value="${escapeAttribute(remembered?.password || '')}" required />
+              <input name="password" type="password" value="${escapeAttribute(passwordValue)}" required />
             </label>
             <label class="checkbox-row">
-              <input name="rememberPassword" type="checkbox" ${remembered ? 'checked' : ''} />
+              <input name="rememberPassword" type="checkbox" ${remembered?.password ? 'checked' : ''} />
               <span>记住密码</span>
             </label>
             <button class="primary-btn" type="submit">登录</button>
@@ -725,6 +900,22 @@ function renderAuthPanel() {
     });
   });
 
+  authPanel.querySelectorAll('[data-remembered-user-id]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.selectedRememberedUserId = button.dataset.rememberedUserId;
+      state.manualLoginEntry = false;
+      renderAuthPanel();
+      authPanel.querySelector('input[name="password"]')?.focus();
+    });
+  });
+
+  authPanel.querySelector('[data-clear-remembered-selection]')?.addEventListener('click', () => {
+    state.selectedRememberedUserId = null;
+    state.manualLoginEntry = true;
+    renderAuthPanel();
+    authPanel.querySelector('input[name="account"]')?.focus();
+  });
+
   authPanel.querySelector('#login-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -738,13 +929,12 @@ function renderAuthPanel() {
           password: form.get('password'),
         },
       });
-      saveRememberedCredentials(
-        form.get('account'),
-        form.get('password'),
-        form.get('rememberPassword') === 'on',
-      );
       state.session = session;
       saveSession(session);
+      rememberAccountFromSession(session, {
+        password: String(form.get('password') || ''),
+        rememberPassword: form.get('rememberPassword') === 'on',
+      });
       await hydrateApp();
       showToast('登录成功');
     } catch (error) {
@@ -768,12 +958,32 @@ function renderAuthPanel() {
       });
       state.session = session;
       saveSession(session);
+      rememberAccountFromSession(session);
       await hydrateApp();
       showToast('注册成功');
     } catch (error) {
       handleError(error);
     }
   });
+}
+
+function renderRememberedAccountOption(account, selected) {
+  return `
+    <button
+      class="remembered-account ${selected ? 'selected' : ''}"
+      type="button"
+      data-remembered-user-id="${escapeAttribute(account.userId)}"
+    >
+      <div class="remembered-account-main">
+        ${renderAvatar(account, 'small')}
+        <div class="remembered-account-copy">
+          <strong>${escapeHtml(account.nickname || account.account)}</strong>
+          <span class="meta">@${escapeHtml(account.account)}</span>
+        </div>
+      </div>
+      <span class="remembered-account-note">${account.password ? '已记住密码' : '需输入密码'}</span>
+    </button>
+  `;
 }
 
 function renderUserSummary() {
@@ -1897,6 +2107,9 @@ function showToast(message) {
 function resetToLoggedOut() {
   disconnectRealtime();
   closeAvatarCropper();
+  state.selectedRememberedUserId = state.session?.user?.id || state.selectedRememberedUserId;
+  state.manualLoginEntry = false;
+  state.rememberedAccounts = loadRememberedAccounts();
   state.session = null;
   state.contacts = [];
   state.invites = [];
