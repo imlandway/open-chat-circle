@@ -3,6 +3,27 @@ import { extname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { requireAuth } from '../../core/http/auth.js';
 
+function resolvePublicBaseUrl(request, configuredBaseUrl) {
+  if (
+    configuredBaseUrl &&
+    configuredBaseUrl.trim() &&
+    !configuredBaseUrl.includes('localhost')
+  ) {
+    return configuredBaseUrl.replace(/\/$/, '');
+  }
+
+  const forwardedProto = request.headers['x-forwarded-proto'];
+  const forwardedHost = request.headers['x-forwarded-host'];
+  const host = forwardedHost || request.headers.host;
+  const protocol = forwardedProto || 'http';
+
+  if (!host) {
+    return '';
+  }
+
+  return `${protocol}://${host}`;
+}
+
 export async function registerStorageRoutes(fastify) {
   fastify.post('/api/uploads/images', { preHandler: requireAuth }, async (request) => {
     const file = await request.file();
@@ -17,9 +38,11 @@ export async function registerStorageRoutes(fastify) {
     await mkdir(fastify.config.uploadDir, { recursive: true });
     const buffer = await file.toBuffer();
     await writeFile(targetPath, buffer);
+    const baseUrl = resolvePublicBaseUrl(request, fastify.config.apiBaseUrl);
+    const uploadPath = `/uploads/${safeName}`;
 
     return {
-      url: `${fastify.config.apiBaseUrl}/uploads/${safeName}`,
+      url: baseUrl ? `${baseUrl}${uploadPath}` : uploadPath,
       name: file.filename,
       size: buffer.length,
       mimeType: file.mimetype,
