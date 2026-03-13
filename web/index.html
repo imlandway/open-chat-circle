@@ -106,6 +106,36 @@
       </form>
     </dialog>
 
+    <dialog id="avatar-dialog">
+      <div class="dialog-form">
+        <div class="panel-header">
+          <h3>裁剪头像</h3>
+          <button class="ghost-btn" type="button" id="close-avatar-btn">关闭</button>
+        </div>
+        <div class="avatar-crop-layout">
+          <div class="avatar-crop-stage">
+            <canvas id="avatar-crop-canvas" width="280" height="280"></canvas>
+          </div>
+          <div class="stack">
+            <label class="stack">
+              <span>缩放</span>
+              <input id="avatar-zoom-input" type="range" min="1" max="3" step="0.01" value="1" />
+            </label>
+            <label class="stack">
+              <span>左右位置</span>
+              <input id="avatar-offset-x-input" type="range" min="-100" max="100" step="1" value="0" />
+            </label>
+            <label class="stack">
+              <span>上下位置</span>
+              <input id="avatar-offset-y-input" type="range" min="-100" max="100" step="1" value="0" />
+            </label>
+            <p class="meta">拖动滑块调整头像范围，保存后会自动生成方形头像。</p>
+          </div>
+        </div>
+        <button type="button" class="primary-btn" id="save-avatar-btn">保存头像</button>
+      </div>
+    </dialog>
+
     <div id="toast" class="toast hidden"></div>
     <script src="/app/app.js" type="module"></script>
   </body>

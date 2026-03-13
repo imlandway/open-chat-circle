@@ -7,6 +7,7 @@ const state = {
   activeConversation: null,
   socket: null,
   pollingTimer: null,
+  avatarCrop: createEmptyAvatarCropState(),
 };
 
 const authPanel = document.querySelector('#auth-panel');
@@ -37,6 +38,13 @@ const groupForm = document.querySelector('#group-form');
 const groupNameInput = document.querySelector('#group-name-input');
 const groupMemberList = document.querySelector('#group-member-list');
 const closeGroupBtn = document.querySelector('#close-group-btn');
+const avatarDialog = document.querySelector('#avatar-dialog');
+const avatarCropCanvas = document.querySelector('#avatar-crop-canvas');
+const avatarZoomInput = document.querySelector('#avatar-zoom-input');
+const avatarOffsetXInput = document.querySelector('#avatar-offset-x-input');
+const avatarOffsetYInput = document.querySelector('#avatar-offset-y-input');
+const closeAvatarBtn = document.querySelector('#close-avatar-btn');
+const saveAvatarBtn = document.querySelector('#save-avatar-btn');
 
 boot();
 
@@ -52,6 +60,17 @@ function boot() {
   }
 
   render();
+}
+
+function createEmptyAvatarCropState() {
+  return {
+    fileName: '',
+    objectUrl: '',
+    image: null,
+    zoom: 1,
+    offsetX: 0,
+    offsetY: 0,
+  };
 }
 
 function wireStaticEvents() {
@@ -172,10 +191,51 @@ function wireStaticEvents() {
       imageInput.value = '';
     }
   });
+
+  avatarZoomInput.addEventListener('input', () => {
+    state.avatarCrop.zoom = Number(avatarZoomInput.value);
+    renderAvatarCropPreview();
+  });
+
+  avatarOffsetXInput.addEventListener('input', () => {
+    state.avatarCrop.offsetX = Number(avatarOffsetXInput.value);
+    renderAvatarCropPreview();
+  });
+
+  avatarOffsetYInput.addEventListener('input', () => {
+    state.avatarCrop.offsetY = Number(avatarOffsetYInput.value);
+    renderAvatarCropPreview();
+  });
+
+  closeAvatarBtn.addEventListener('click', closeAvatarCropper);
+  avatarDialog.addEventListener('close', resetAvatarCropper);
+
+  saveAvatarBtn.addEventListener('click', async () => {
+    try {
+      const file = await exportAvatarCrop();
+      const upload = await uploadImage(file);
+      const response = await api('/api/users/me', {
+        method: 'PATCH',
+        body: {
+          nickname: state.session.user.nickname,
+          avatarUrl: upload.url,
+        },
+      });
+      state.session.user = response.user;
+      saveSession(state.session);
+      closeAvatarCropper();
+      await Promise.all([hydrateSideData(), hydrateConversations()]);
+      render();
+      showToast('头像已更新');
+    } catch (error) {
+      handleError(error);
+    }
+  });
 }
 
 function resetToLoggedOut() {
   disconnectSocket();
+  closeAvatarCropper();
   state.session = null;
   state.contacts = [];
   state.invites = [];
@@ -511,24 +571,13 @@ function renderUserSummary() {
 
   userSummary.querySelector('#user-avatar-input')?.addEventListener('change', async (event) => {
     const file = event.target.files?.[0];
+    event.target.value = '';
     if (!file) {
       return;
     }
 
     try {
-      const upload = await uploadImage(file);
-      const response = await api('/api/users/me', {
-        method: 'PATCH',
-        body: {
-          nickname: state.session.user.nickname,
-          avatarUrl: upload.url,
-        },
-      });
-      state.session.user = response.user;
-      saveSession(state.session);
-      await Promise.all([hydrateSideData(), hydrateConversations()]);
-      render();
-      showToast('头像已更新');
+      await openAvatarCropper(file);
     } catch (error) {
       handleError(error);
     }
@@ -699,6 +748,142 @@ function renderGroupMembers() {
     `;
     groupMemberList.appendChild(row);
   }
+}
+
+async function openAvatarCropper(file) {
+  const objectUrl = URL.createObjectURL(file);
+  const image = await loadImage(objectUrl);
+  state.avatarCrop = {
+    fileName: file.name || 'avatar.png',
+    objectUrl,
+    image,
+    zoom: 1,
+    offsetX: 0,
+    offsetY: 0,
+  };
+  avatarZoomInput.value = '1';
+  avatarOffsetXInput.value = '0';
+  avatarOffsetYInput.value = '0';
+  avatarDialog.showModal();
+  renderAvatarCropPreview();
+}
+
+function closeAvatarCropper() {
+  if (avatarDialog.open) {
+    avatarDialog.close();
+  } else {
+    resetAvatarCropper();
+  }
+}
+
+function resetAvatarCropper() {
+  if (state.avatarCrop.objectUrl) {
+    URL.revokeObjectURL(state.avatarCrop.objectUrl);
+  }
+  state.avatarCrop = createEmptyAvatarCropState();
+  const ctx = avatarCropCanvas.getContext('2d');
+  ctx.clearRect(0, 0, avatarCropCanvas.width, avatarCropCanvas.height);
+}
+
+function renderAvatarCropPreview() {
+  const { image, zoom, offsetX, offsetY } = state.avatarCrop;
+  const ctx = avatarCropCanvas.getContext('2d');
+  const cropSize = avatarCropCanvas.width;
+  ctx.clearRect(0, 0, cropSize, cropSize);
+  ctx.fillStyle = '#f5fbf9';
+  ctx.fillRect(0, 0, cropSize, cropSize);
+
+  if (!image) {
+    return;
+  }
+
+  const transform = calculateAvatarTransform({
+    imageWidth: image.width,
+    imageHeight: image.height,
+    cropSize,
+    zoom,
+    offsetXPercent: offsetX,
+    offsetYPercent: offsetY,
+  });
+
+  ctx.drawImage(
+    image,
+    transform.drawX,
+    transform.drawY,
+    transform.drawWidth,
+    transform.drawHeight,
+  );
+
+  ctx.strokeStyle = 'rgba(15, 118, 110, 0.9)';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(2, 2, cropSize - 4, cropSize - 4);
+}
+
+function calculateAvatarTransform({ imageWidth, imageHeight, cropSize, zoom, offsetXPercent, offsetYPercent }) {
+  const baseScale = Math.max(cropSize / imageWidth, cropSize / imageHeight);
+  const scale = baseScale * zoom;
+  const drawWidth = imageWidth * scale;
+  const drawHeight = imageHeight * scale;
+  const maxOffsetX = Math.max(0, (drawWidth - cropSize) / 2);
+  const maxOffsetY = Math.max(0, (drawHeight - cropSize) / 2);
+  const actualOffsetX = (offsetXPercent / 100) * maxOffsetX;
+  const actualOffsetY = (offsetYPercent / 100) * maxOffsetY;
+
+  return {
+    drawWidth,
+    drawHeight,
+    drawX: (cropSize - drawWidth) / 2 + actualOffsetX,
+    drawY: (cropSize - drawHeight) / 2 + actualOffsetY,
+  };
+}
+
+async function exportAvatarCrop() {
+  const { image, fileName, zoom, offsetX, offsetY } = state.avatarCrop;
+  if (!image) {
+    throw new Error('请先选择头像图片');
+  }
+
+  const outputSize = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = outputSize;
+  canvas.height = outputSize;
+  const ctx = canvas.getContext('2d');
+  const transform = calculateAvatarTransform({
+    imageWidth: image.width,
+    imageHeight: image.height,
+    cropSize: outputSize,
+    zoom,
+    offsetXPercent: offsetX,
+    offsetYPercent: offsetY,
+  });
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, outputSize, outputSize);
+  ctx.drawImage(image, transform.drawX, transform.drawY, transform.drawWidth, transform.drawHeight);
+
+  const blob = await new Promise((resolve) => {
+    canvas.toBlob(resolve, 'image/png', 0.92);
+  });
+
+  if (!blob) {
+    throw new Error('头像裁剪失败，请重试');
+  }
+
+  return new File([blob], normalizeAvatarFileName(fileName), { type: 'image/png' });
+}
+
+function normalizeAvatarFileName(fileName) {
+  const base = String(fileName || 'avatar').replace(/\.[^.]+$/, '');
+  return `${base || 'avatar'}-avatar.png`;
+}
+
+function loadImage(objectUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('图片加载失败，请换一张图片试试'));
+    image.src = objectUrl;
+  });
 }
 
 async function uploadImage(file) {

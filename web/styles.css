@@ -390,6 +390,28 @@ dialog {
   padding: 20px;
 }
 
+.avatar-crop-layout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.avatar-crop-stage {
+  width: 280px;
+  height: 280px;
+  border-radius: 28px;
+  overflow: hidden;
+  background: linear-gradient(135deg, #eef7f4, #f8fbfa);
+  border: 1px solid rgba(15, 118, 110, 0.14);
+}
+
+.avatar-crop-stage canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
 .dialog-form {
   display: flex;
   flex-direction: column;
@@ -436,5 +458,9 @@ dialog {
 
   .chat-column {
     min-height: 60vh;
+  }
+
+  .avatar-crop-layout {
+    grid-template-columns: 1fr;
   }
 }
