@@ -1,0 +1,12 @@
+[
+  {
+    "id": "user_admin",
+    "account": "captain",
+    "nickname": "圈主",
+    "avatarUrl": "",
+    "passwordHash": "c028954ad83dcd5164e2d553c22bed6d2f16d709ea0754bf0650e1628aff8cb0:4f0408131171b64bc8c8b516b2bfe916",
+    "status": "active",
+    "createdAt": "2026-03-13T00:00:00.000Z",
+    "isAdmin": true
+  }
+]

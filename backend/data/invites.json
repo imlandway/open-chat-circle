@@ -1,0 +1,12 @@
+[
+  {
+    "id": "invite_default",
+    "code": "OPEN-CIRCLE-2026",
+    "createdBy": "user_admin",
+    "maxUses": 50,
+    "usedCount": 0,
+    "expiresAt": "2027-01-01T00:00:00.000Z",
+    "status": "active",
+    "createdAt": "2026-03-13T00:00:00.000Z"
+  }
+]

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Open Chat Circle</title>
+    <link rel="stylesheet" href="/app/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <h1>Open Chat Circle</h1>
+          <p>开放 API 的朋友聊天空间</p>
+        </div>
+
+        <section id="auth-panel" class="panel"></section>
+
+        <section id="user-panel" class="panel hidden">
+          <div class="panel-header">
+            <h2>当前用户</h2>
+            <button id="logout-btn" class="ghost-btn">退出</button>
+          </div>
+          <div id="user-summary" class="user-summary"></div>
+        </section>
+
+        <section id="contacts-panel" class="panel hidden">
+          <div class="panel-header">
+            <h2>联系人</h2>
+            <button id="refresh-contacts-btn" class="ghost-btn">刷新</button>
+          </div>
+          <div id="contacts-list" class="list"></div>
+        </section>
+
+        <section id="admin-panel" class="panel hidden">
+          <div class="panel-header">
+            <h2>邀请码</h2>
+            <button id="create-invite-btn" class="ghost-btn">生成</button>
+          </div>
+          <div id="invite-list" class="list"></div>
+        </section>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <h2>会话</h2>
+            <p id="connection-status">未连接</p>
+          </div>
+          <button id="create-group-btn" class="primary-btn hidden">创建群聊</button>
+        </header>
+
+        <section class="content">
+          <div class="column conversations-column">
+            <div id="conversation-list" class="list"></div>
+          </div>
+
+          <div class="column chat-column">
+            <div id="empty-state" class="empty-state">
+              <h3>先选择一个会话</h3>
+              <p>你可以从联系人里发起聊天，或者创建一个群聊。</p>
+            </div>
+
+            <div id="chat-panel" class="chat-panel hidden">
+              <div class="chat-header">
+                <div>
+                  <h3 id="chat-title">会话</h3>
+                  <p id="chat-meta"></p>
+                </div>
+              </div>
+
+              <div id="message-list" class="message-list"></div>
+
+              <form id="message-form" class="composer">
+                <input id="message-input" type="text" placeholder="输入消息" autocomplete="off" />
+                <label class="file-btn">
+                  图片
+                  <input id="image-input" type="file" accept="image/*" hidden />
+                </label>
+                <button type="submit" class="primary-btn">发送</button>
+              </form>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="group-dialog">
+      <form method="dialog" id="group-form" class="dialog-form">
+        <div class="panel-header">
+          <h3>创建群聊</h3>
+          <button class="ghost-btn" value="cancel">关闭</button>
+        </div>
+        <label>
+          群名称
+          <input id="group-name-input" type="text" required />
+        </label>
+        <div>
+          <p>选择成员</p>
+          <div id="group-member-list" class="list compact-list"></div>
+        </div>
+        <button type="submit" class="primary-btn">创建</button>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast hidden"></div>
+    <script src="/app/app.js" type="module"></script>
+  </body>
+</html>

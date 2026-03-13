@@ -1,0 +1,282 @@
+openapi: 3.1.0
+info:
+  title: Open Chat Circle API
+  version: 0.1.0
+  description: |
+    面向熟人小圈子的开放聊天 API。核心目标是任何客户端、机器人或第三方服务都可以直接接入。
+servers:
+  - url: http://localhost:8787
+tags:
+  - name: Auth
+  - name: Social
+  - name: Chat
+  - name: Storage
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+  /api/auth/register-with-invite:
+    post:
+      tags: [Auth]
+      summary: Register with invite code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [inviteCode, nickname, password]
+              properties:
+                inviteCode:
+                  type: string
+                nickname:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Session issued
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Login with account and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [account, password]
+              properties:
+                account:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Session issued
+  /api/auth/me:
+    get:
+      tags: [Auth]
+      summary: Get current user
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User info
+  /api/contacts:
+    get:
+      tags: [Social]
+      summary: List active contacts
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Contact list
+  /api/invites:
+    get:
+      tags: [Social]
+      summary: List invites
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Invite list
+    post:
+      tags: [Social]
+      summary: Create invite
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [uses, expiresAt]
+              properties:
+                uses:
+                  type: integer
+                expiresAt:
+                  type: string
+                  format: date-time
+      responses:
+        '200':
+          description: Invite created
+  /api/users/me:
+    patch:
+      tags: [Social]
+      summary: Update current profile
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nickname, avatarUrl]
+              properties:
+                nickname:
+                  type: string
+                avatarUrl:
+                  type: string
+      responses:
+        '200':
+          description: Updated user
+  /api/conversations:
+    get:
+      tags: [Chat]
+      summary: List conversations
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Conversation list
+  /api/conversations/direct:
+    post:
+      tags: [Chat]
+      summary: Create or fetch a direct conversation
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [peerUserId]
+              properties:
+                peerUserId:
+                  type: string
+      responses:
+        '200':
+          description: Conversation summary
+  /api/conversations/group:
+    post:
+      tags: [Chat]
+      summary: Create a group conversation
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, memberIds]
+              properties:
+                name:
+                  type: string
+                memberIds:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Conversation summary
+  /api/conversations/{conversationId}/messages:
+    get:
+      tags: [Chat]
+      summary: List conversation messages
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: conversationId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Message list
+    post:
+      tags: [Chat]
+      summary: Send a text or image message
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: conversationId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  required: [type, text]
+                  properties:
+                    type:
+                      type: string
+                      const: text
+                    text:
+                      type: string
+                - type: object
+                  required: [type, imageUrl]
+                  properties:
+                    type:
+                      type: string
+                      const: image
+                    imageUrl:
+                      type: string
+                    imageName:
+                      type: string
+      responses:
+        '200':
+          description: Created message
+  /api/conversations/{conversationId}/read:
+    post:
+      tags: [Chat]
+      summary: Mark a conversation as read
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: conversationId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messageId]
+              properties:
+                messageId:
+                  type: string
+      responses:
+        '200':
+          description: Read receipt
+  /api/uploads/images:
+    post:
+      tags: [Storage]
+      summary: Upload a chat image or avatar file
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Uploaded file info
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer

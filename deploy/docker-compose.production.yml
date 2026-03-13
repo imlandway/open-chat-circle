@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: open_chat_circle
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d open_chat_circle"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    environment:
+      PORT: 8787
+      API_BASE_URL: https://${CHAT_APP_PUBLIC_HOSTNAME}
+      CORS_ORIGIN: https://${CHAT_APP_PUBLIC_HOSTNAME}
+      SESSION_SECRET: ${SESSION_SECRET}
+      STORE_DRIVER: postgres
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/open_chat_circle
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - uploads_data:/app/backend/data/uploads
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  uploads_data:

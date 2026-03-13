@@ -1,0 +1,21 @@
+{
+  "name": "open-chat-circle-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "db:init": "node scripts/init-postgres.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.1",
+    "@fastify/multipart": "^9.0.3",
+    "@fastify/static": "^8.0.4",
+    "@fastify/websocket": "^11.0.1",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.0.0",
+    "pg": "^8.13.1"
+  }
+}
