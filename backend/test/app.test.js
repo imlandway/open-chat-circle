@@ -80,6 +80,67 @@ test('register -> create direct conversation -> send message -> mark read', asyn
   await rm(dataDir, { recursive: true, force: true });
 });
 
+test('read state only moves forward when older read receipts arrive late', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
+  const store = new JsonStore(dataDir);
+  const sessionService = new SessionService('test-secret');
+  const authService = new AuthService(store, sessionService);
+  const socialService = new SocialService(store);
+  const chatService = new ChatService(store);
+
+  await authService.ensureSeedAdmin();
+  await store.write('invites', [
+    {
+      id: 'invite_test',
+      code: 'TEST-OPEN',
+      createdBy: 'user_admin',
+      maxUses: 10,
+      usedCount: 0,
+      expiresAt: '2027-01-01T00:00:00.000Z',
+      status: 'active',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    },
+  ]);
+
+  const alice = await authService.registerWithInvite({
+    inviteCode: 'TEST-OPEN',
+    nickname: 'Alice',
+    password: 'password123',
+  });
+  const bob = await authService.registerWithInvite({
+    inviteCode: 'TEST-OPEN',
+    nickname: 'Bob',
+    password: 'password123',
+  });
+
+  await socialService.addFriend(alice.user.id, { userId: bob.user.id });
+
+  const direct = await chatService.createDirectConversation(alice.user.id, bob.user.id);
+  const first = await chatService.sendMessage(alice.user.id, direct.id, {
+    type: 'text',
+    text: 'first',
+  });
+  const second = await chatService.sendMessage(alice.user.id, direct.id, {
+    type: 'text',
+    text: 'second',
+  });
+
+  const latestReceipt = await chatService.markRead(bob.user.id, direct.id, second.message.id);
+  const staleReceipt = await chatService.markRead(bob.user.id, direct.id, first.message.id);
+
+  assert.equal(latestReceipt.lastReadMessageId, second.message.id);
+  assert.equal(staleReceipt.lastReadMessageId, second.message.id);
+
+  const aliceMessages = await chatService.listMessages(alice.user.id, direct.id);
+  assert.equal(aliceMessages[0].readByCount, 1);
+  assert.equal(aliceMessages[1].readByCount, 1);
+
+  const bobConversations = await chatService.listConversations(bob.user.id);
+  assert.equal(bobConversations[0].unreadCount, 0);
+
+  await rm(dataDir, { recursive: true, force: true });
+});
+
 test('users can add friends, reply, recall messages, and manage group members', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
   const store = new JsonStore(dataDir);

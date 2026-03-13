@@ -361,17 +361,33 @@ export class ChatService {
   }
 
   async markRead(userId, conversationId, messageId) {
-    await this.requireConversationMember(userId, conversationId);
+    const conversation = await this.requireConversationMember(userId, conversationId);
     assert(messageId, 400, 'Message ID is required.');
     const messages = await this.store.read(MESSAGES);
     const message = messages.find((item) => item.id === messageId && item.conversationId === conversationId);
     assert(message, 404, 'Message not found.');
+    const threadMessages = this.getConversationThread(messages, conversationId);
+    const messageIndexById = new Map(threadMessages.map((item, index) => [item.id, index]));
+    const targetIndex = messageIndexById.get(message.id) ?? -1;
+    assert(targetIndex >= 0, 404, 'Message not found.');
 
     const readStates = await this.store.read(READ_STATES);
     const existing = readStates.find(
       (state) => state.userId === userId && state.conversationId === conversationId,
     );
     const updatedAt = new Date().toISOString();
+    const existingIndex = existing?.lastReadMessageId && messageIndexById.has(existing.lastReadMessageId)
+      ? messageIndexById.get(existing.lastReadMessageId)
+      : -1;
+
+    if (existing && existingIndex >= targetIndex) {
+      return {
+        conversationId,
+        userId,
+        lastReadMessageId: existing.lastReadMessageId,
+        lastReadAt: existing.lastReadAt,
+      };
+    }
 
     if (existing) {
       existing.lastReadMessageId = message.id;
@@ -438,15 +454,16 @@ export class ChatService {
     const readState = readStates.find(
       (state) => state.conversationId === conversationId && state.userId === userId,
     );
+    const messageIndexById = new Map(threadMessages.map((message, index) => [message.id, index]));
+    const lastReadIndex = readState?.lastReadMessageId && messageIndexById.has(readState.lastReadMessageId)
+      ? messageIndexById.get(readState.lastReadMessageId)
+      : -1;
 
     return threadMessages.filter((message) => {
       if (message.senderId === userId) {
         return false;
       }
-      if (!readState?.lastReadAt) {
-        return true;
-      }
-      return toTimestamp(message.createdAt) > toTimestamp(readState.lastReadAt);
+      return (messageIndexById.get(message.id) ?? -1) > lastReadIndex;
     }).length;
   }
 
