@@ -1,3 +1,6 @@
+const CHAT_HEIGHT_STORAGE_VERSION = '2';
+const DEFAULT_CHAT_LIST_HEIGHT = 280;
+
 const state = {
   session: loadSession(),
   authMode: 'login',
@@ -313,9 +316,6 @@ function syncRememberedPassword(password) {
 
   saveRememberedCredentials(state.session.user.account, password, true);
 }
-
-const CHAT_HEIGHT_STORAGE_VERSION = '2';
-const DEFAULT_CHAT_LIST_HEIGHT = 280;
 
 function loadChatListHeight() {
   const version = localStorage.getItem('open-chat-circle-chat-height-version');
