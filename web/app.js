@@ -63,6 +63,20 @@ function boot() {
   });
 }
 
+function setConnectionStatus(message, tone = 'offline') {
+  connectionStatus.textContent = message;
+  connectionStatus.classList.remove('connected', 'unstable');
+
+  if (tone === 'connected') {
+    connectionStatus.classList.add('connected');
+    return;
+  }
+
+  if (tone === 'unstable') {
+    connectionStatus.classList.add('unstable');
+  }
+}
+
 function wireStaticEvents() {
   logoutBtn.addEventListener('click', () => {
     resetToLoggedOut();
@@ -363,32 +377,32 @@ function connectRealtime() {
   disconnectRealtime();
 
   if (!state.session?.sessionToken) {
-    connectionStatus.textContent = '未连接';
+    setConnectionStatus('未连接', 'offline');
     return;
   }
 
   if (!('EventSource' in window)) {
-    connectionStatus.textContent = '浏览器不支持实时连接，已启用自动刷新';
+    setConnectionStatus('浏览器不支持实时连接，已启用自动刷新', 'unstable');
     startPollingFallback();
     return;
   }
 
-  connectionStatus.textContent = '正在连接实时同步...';
+  setConnectionStatus('正在连接实时同步...', 'unstable');
   const source = new EventSource(`/api/events?token=${encodeURIComponent(state.session.sessionToken)}`);
   state.realtimeSource = source;
 
   source.addEventListener('ready', () => {
-    connectionStatus.textContent = '实时同步已连接';
+    setConnectionStatus('实时同步已连接', 'connected');
     stopPollingFallback();
   });
 
   source.onopen = () => {
-    connectionStatus.textContent = '实时同步已连接';
+    setConnectionStatus('实时同步已连接', 'connected');
     stopPollingFallback();
   };
 
   source.onerror = () => {
-    connectionStatus.textContent = '连接波动，已启用自动刷新';
+    setConnectionStatus('连接波动，已启用自动刷新', 'unstable');
     startPollingFallback();
   };
 
@@ -489,7 +503,7 @@ function render() {
     chatAvatar.innerHTML = '';
     chatPanel.classList.add('hidden');
     emptyState.classList.remove('hidden');
-    connectionStatus.textContent = '未连接';
+    setConnectionStatus('未连接', 'offline');
     return;
   }
 

@@ -10,8 +10,9 @@
     <div class="shell">
       <aside class="sidebar">
         <div class="brand">
+          <span class="eyebrow">Open API Chat</span>
           <h1>Open Chat Circle</h1>
-          <p>开放 API 的朋友聊天空间</p>
+          <p>一个更开放、更轻松的小圈子聊天空间。</p>
         </div>
 
         <section id="auth-panel" class="panel"></section>
@@ -48,15 +49,20 @@
 
       <main class="main">
         <header class="topbar">
-          <div>
+          <div class="topbar-copy">
+            <span class="eyebrow">Realtime Messaging</span>
             <h2>会话</h2>
-            <p id="connection-status">未连接</p>
+            <p id="connection-status" class="connection-status">未连接</p>
           </div>
           <button id="create-group-btn" class="primary-btn hidden" type="button">创建群聊</button>
         </header>
 
         <section class="content">
           <div class="column conversations-column">
+            <div class="section-intro">
+              <span class="eyebrow">Recent</span>
+              <h3>会话列表</h3>
+            </div>
             <div id="conversation-list" class="list"></div>
           </div>
 
