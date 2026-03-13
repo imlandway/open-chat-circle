@@ -46,7 +46,7 @@ class RealtimeHub {
             socket.send(JSON.stringify(event));
           } catch {
             socket.close();
-            set.delete(socket);
+            sockets.delete(socket);
           }
         }
       }
