@@ -8,62 +8,64 @@
   </head>
   <body>
     <div class="shell">
-      <aside class="sidebar">
-        <div class="brand">
-          <h1>Open Chat Circle</h1>
-          <p>开放聊天</p>
+      <aside id="nav-rail" class="nav-rail hidden">
+        <button id="nav-mine-btn" class="nav-avatar-btn" type="button" aria-label="我的"></button>
+
+        <div class="nav-shortcuts">
+          <button class="nav-btn" data-nav-section="contacts" type="button">联系人</button>
+          <button class="nav-btn" data-nav-section="conversations" type="button">会话</button>
         </div>
 
-        <section id="auth-panel" class="panel"></section>
-
-        <section id="user-panel" class="panel hidden">
-          <div class="panel-header">
-            <h2>我的主页</h2>
-            <button id="logout-btn" class="ghost-btn" type="button">退出</button>
-          </div>
-          <div id="user-summary"></div>
-        </section>
-
-        <section id="contacts-panel" class="panel hidden">
-          <div class="panel-header">
-            <h2>联系人</h2>
-            <button id="refresh-contacts-btn" class="ghost-btn" type="button">刷新</button>
-          </div>
-          <div id="contacts-list" class="list"></div>
-        </section>
-
-        <section id="admin-panel" class="panel hidden">
-          <div class="panel-header">
-            <h2>邀请码</h2>
-            <button id="create-invite-btn" class="ghost-btn" type="button">生成</button>
-          </div>
-          <div id="invite-list" class="list"></div>
-          <div class="panel-header sub-panel-header">
-            <h3>全部账号</h3>
-            <span class="meta">仅可重置密码</span>
-          </div>
-          <div id="admin-user-list" class="list"></div>
-        </section>
+        <button id="nav-admin-btn" class="nav-btn hidden" data-nav-section="admin" type="button">全部账号</button>
+        <button id="logout-btn" class="nav-logout hidden" type="button">退出</button>
       </aside>
 
       <main class="main">
         <header class="topbar">
           <div class="topbar-copy">
-            <h2>会话</h2>
+            <h2 id="topbar-title">登录</h2>
             <p id="connection-status" class="connection-status">未连接</p>
           </div>
           <button id="create-group-btn" class="ghost-btn hidden" type="button">新建群聊</button>
         </header>
 
         <section class="content">
-          <div class="column conversations-column">
-            <div id="conversation-list" class="list"></div>
+          <div class="sidebar-column">
+            <section id="auth-panel" class="panel"></section>
+
+            <section id="user-panel" class="panel hidden">
+              <div id="user-summary"></div>
+            </section>
+
+            <section id="contacts-panel" class="panel hidden">
+              <div class="panel-header">
+                <h3>联系人</h3>
+                <button id="refresh-contacts-btn" class="ghost-btn" type="button">刷新</button>
+              </div>
+              <div id="contacts-list" class="list"></div>
+            </section>
+
+            <section id="conversations-panel" class="panel hidden">
+              <div id="conversation-list" class="list"></div>
+            </section>
+
+            <section id="admin-panel" class="panel hidden">
+              <div class="panel-header">
+                <h3>全部账号</h3>
+                <button id="create-invite-btn" class="ghost-btn" type="button">生成邀请码</button>
+              </div>
+              <div id="admin-user-list" class="list"></div>
+              <div class="panel-header sub-panel-header">
+                <h3>邀请码</h3>
+              </div>
+              <div id="invite-list" class="list"></div>
+            </section>
           </div>
 
-          <div class="column chat-column">
+          <div class="chat-column">
             <div id="empty-state" class="empty-state">
               <h3>请选择一个会话</h3>
-              <p>从左侧联系人发起聊天，或创建群聊。</p>
+              <p>你可以从联系人发起聊天，或切到会话列表继续聊天。</p>
             </div>
 
             <div id="chat-panel" class="chat-panel hidden">
@@ -78,6 +80,7 @@
               </div>
 
               <div id="message-list" class="message-list"></div>
+              <div id="chat-resizer" class="chat-resizer" title="拖动调整聊天区域高度"></div>
 
               <form id="message-form" class="composer">
                 <input id="message-input" type="text" placeholder="输入消息" autocomplete="off" />
@@ -115,6 +118,7 @@
       <div class="dialog-form">
         <div class="panel-header">
           <h3>裁剪头像</h3>
+          <button class="ghost-btn" type="button" id="close-avatar-btn">取消</button>
         </div>
 
         <div class="avatar-crop-layout">
@@ -126,7 +130,6 @@
         </div>
 
         <div class="dialog-actions">
-          <button class="ghost-btn" type="button" id="close-avatar-btn">取消</button>
           <button type="button" class="primary-btn" id="save-avatar-btn">保存头像</button>
         </div>
       </div>

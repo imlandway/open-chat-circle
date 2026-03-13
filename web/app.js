@@ -1,6 +1,8 @@
 const state = {
   session: loadSession(),
   authMode: 'login',
+  navSection: 'conversations',
+  mineSection: 'profile',
   contacts: [],
   invites: [],
   adminUsers: [],
@@ -9,17 +11,25 @@ const state = {
   activeConversation: null,
   realtimeSource: null,
   pollingTimer: null,
+  chatListHeight: loadChatListHeight(),
   avatarCrop: createEmptyAvatarCropState(),
 };
 
 const authPanel = document.querySelector('#auth-panel');
+const navRail = document.querySelector('#nav-rail');
+const navMineBtn = document.querySelector('#nav-mine-btn');
+const navAdminBtn = document.querySelector('#nav-admin-btn');
+const navSectionButtons = [...document.querySelectorAll('[data-nav-section]')];
+const topbarTitle = document.querySelector('#topbar-title');
 const userPanel = document.querySelector('#user-panel');
 const contactsPanel = document.querySelector('#contacts-panel');
+const conversationsPanel = document.querySelector('#conversations-panel');
 const adminPanel = document.querySelector('#admin-panel');
 const conversationList = document.querySelector('#conversation-list');
 const messageList = document.querySelector('#message-list');
 const emptyState = document.querySelector('#empty-state');
 const chatPanel = document.querySelector('#chat-panel');
+const chatResizer = document.querySelector('#chat-resizer');
 const chatTitle = document.querySelector('#chat-title');
 const chatMeta = document.querySelector('#chat-meta');
 const chatAvatar = document.querySelector('#chat-avatar');
@@ -78,6 +88,18 @@ function setConnectionStatus(message, tone = 'offline') {
 }
 
 function wireStaticEvents() {
+  navMineBtn.addEventListener('click', () => {
+    state.navSection = 'mine';
+    render();
+  });
+
+  navSectionButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      state.navSection = button.dataset.navSection;
+      render();
+    });
+  });
+
   logoutBtn.addEventListener('click', () => {
     resetToLoggedOut();
   });
@@ -143,6 +165,8 @@ function wireStaticEvents() {
     await submitImageMessage();
   });
 
+  chatResizer.addEventListener('pointerdown', startChatResize);
+
   closeAvatarBtn.addEventListener('click', closeAvatarCropper);
   avatarDialog.addEventListener('close', resetAvatarCropper);
   avatarDialog.addEventListener('cancel', (event) => {
@@ -183,6 +207,7 @@ function wireStaticEvents() {
     if (avatarDialog.open && state.avatarCrop.image) {
       initializeAvatarCrop();
     }
+    applyChatHeight();
   });
 
   window.addEventListener('beforeunload', () => {
@@ -280,6 +305,53 @@ function syncRememberedPassword(password) {
   saveRememberedCredentials(state.session.user.account, password, true);
 }
 
+function loadChatListHeight() {
+  const raw = localStorage.getItem('open-chat-circle-chat-height');
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : 420;
+}
+
+function saveChatListHeight(height) {
+  localStorage.setItem('open-chat-circle-chat-height', String(height));
+}
+
+function applyChatHeight() {
+  if (chatPanel.classList.contains('hidden')) {
+    return;
+  }
+
+  const panelHeight = chatPanel.getBoundingClientRect().height;
+  const headerHeight = chatPanel.querySelector('.chat-header')?.offsetHeight || 0;
+  const composerHeight = messageForm.offsetHeight || 0;
+  const resizerHeight = chatResizer.offsetHeight || 16;
+  const maxHeight = Math.max(220, panelHeight - headerHeight - composerHeight - resizerHeight - 24);
+  const nextHeight = clamp(state.chatListHeight, 220, maxHeight);
+
+  state.chatListHeight = nextHeight;
+  messageList.style.height = `${nextHeight}px`;
+  saveChatListHeight(nextHeight);
+}
+
+function startChatResize(event) {
+  event.preventDefault();
+
+  const startY = event.clientY;
+  const startHeight = messageList.getBoundingClientRect().height;
+
+  function onPointerMove(moveEvent) {
+    state.chatListHeight = startHeight + (moveEvent.clientY - startY);
+    applyChatHeight();
+  }
+
+  function onPointerUp() {
+    window.removeEventListener('pointermove', onPointerMove);
+    window.removeEventListener('pointerup', onPointerUp);
+  }
+
+  window.addEventListener('pointermove', onPointerMove);
+  window.addEventListener('pointerup', onPointerUp);
+}
+
 async function hydrateApp() {
   await ensureSession();
   await Promise.all([hydrateSideData(), hydrateConversations()]);
@@ -332,6 +404,7 @@ async function selectConversation(conversationId) {
     return;
   }
 
+  state.navSection = 'conversations';
   state.activeConversation = conversation;
   render();
   await loadMessages(conversation.id, { markAsRead: true });
@@ -487,13 +560,25 @@ async function handleRealtimeEvent(event) {
 
 function render() {
   const authenticated = Boolean(state.session?.sessionToken && state.session?.user);
+  if (!authenticated) {
+    state.navSection = 'conversations';
+  }
+
+  if (authenticated && state.navSection === 'admin' && !state.session.user.isAdmin) {
+    state.navSection = 'conversations';
+  }
+
+  navRail.classList.toggle('hidden', !authenticated);
   authPanel.classList.toggle('hidden', authenticated);
-  userPanel.classList.toggle('hidden', !authenticated);
-  contactsPanel.classList.toggle('hidden', !authenticated);
-  adminPanel.classList.toggle('hidden', !authenticated || !state.session?.user?.isAdmin);
-  createGroupBtn.classList.toggle('hidden', !authenticated);
+  userPanel.classList.toggle('hidden', !authenticated || state.navSection !== 'mine');
+  contactsPanel.classList.toggle('hidden', !authenticated || state.navSection !== 'contacts');
+  conversationsPanel.classList.toggle('hidden', !authenticated || state.navSection !== 'conversations');
+  adminPanel.classList.toggle('hidden', !authenticated || !state.session?.user?.isAdmin || state.navSection !== 'admin');
+  createGroupBtn.classList.toggle('hidden', !authenticated || state.navSection !== 'conversations');
+  logoutBtn.classList.toggle('hidden', !authenticated);
 
   if (!authenticated) {
+    topbarTitle.textContent = '登录';
     renderAuthPanel();
     conversationList.innerHTML = '';
     contactsList.innerHTML = '';
@@ -507,12 +592,50 @@ function render() {
     return;
   }
 
+  renderNavigation();
   renderUserSummary();
   renderContacts();
   renderInvites();
   renderAdminUsers();
   renderConversations();
   renderMessages();
+}
+
+function renderNavigation() {
+  const user = state.session.user;
+  navMineBtn.innerHTML = `
+    ${renderAvatar(user)}
+    <span class="nav-label">我的</span>
+  `;
+  navMineBtn.classList.toggle('active', state.navSection === 'mine');
+  navAdminBtn.classList.toggle('hidden', !user.isAdmin);
+  navAdminBtn.classList.toggle('active', state.navSection === 'admin');
+
+  navSectionButtons.forEach((button) => {
+    button.classList.toggle('active', state.navSection === button.dataset.navSection);
+  });
+
+  topbarTitle.textContent = getTopbarTitle();
+}
+
+function getTopbarTitle() {
+  if (!state.session?.user) {
+    return '登录';
+  }
+
+  if (state.navSection === 'mine') {
+    return '我的';
+  }
+
+  if (state.navSection === 'contacts') {
+    return '联系人';
+  }
+
+  if (state.navSection === 'admin') {
+    return '全部账号';
+  }
+
+  return '会话';
 }
 
 function renderAuthPanel() {
@@ -622,6 +745,163 @@ function renderAuthPanel() {
 
 function renderUserSummary() {
   const user = state.session.user;
+  userSummary.innerHTML = `
+    <div class="stack">
+      <div class="user-card profile-hero">
+        <div class="user-card-main">
+          ${renderAvatar(user, 'large')}
+          <div class="user-text">
+            <div class="user-title">${escapeHtml(user.nickname)}</div>
+            <div class="meta">@${escapeHtml(user.account)}</div>
+            <div class="meta">${user.isAdmin ? '管理员' : '成员'}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mine-tabs">
+        <button class="mine-tab ${state.mineSection === 'profile' ? 'active' : ''}" type="button" data-mine-section="profile">资料设置</button>
+        <button class="mine-tab ${state.mineSection === 'password' ? 'active' : ''}" type="button" data-mine-section="password">密码设置</button>
+        <button class="mine-tab ${state.mineSection === 'avatar' ? 'active' : ''}" type="button" data-mine-section="avatar">头像设置</button>
+      </div>
+
+      ${
+        state.mineSection === 'profile'
+          ? `
+            <form id="profile-form" class="stack form-card">
+              <div class="section-title">资料设置</div>
+              <label class="field">
+                <span>昵称</span>
+                <input name="nickname" type="text" value="${escapeAttribute(user.nickname)}" required />
+              </label>
+              <label class="field">
+                <span>账号</span>
+                <input name="account" type="text" value="${escapeAttribute(user.account)}" minlength="3" required />
+              </label>
+              <button class="primary-btn" type="submit">保存资料</button>
+            </form>
+          `
+          : ''
+      }
+
+      ${
+        state.mineSection === 'password'
+          ? `
+            <form id="password-form" class="stack form-card">
+              <div class="section-title">密码设置</div>
+              <label class="field">
+                <span>当前密码</span>
+                <input name="currentPassword" type="password" required />
+              </label>
+              <label class="field">
+                <span>新密码</span>
+                <input name="newPassword" type="password" minlength="8" required />
+              </label>
+              <label class="field">
+                <span>确认新密码</span>
+                <input name="confirmPassword" type="password" minlength="8" required />
+              </label>
+              <button class="primary-btn" type="submit">修改密码</button>
+            </form>
+          `
+          : ''
+      }
+
+      ${
+        state.mineSection === 'avatar'
+          ? `
+            <div class="form-card profile-avatar-card">
+              <div class="section-title">头像设置</div>
+              <div class="profile-avatar-preview">
+                ${renderAvatar(user, 'large')}
+                <div class="stack">
+                  <div>${escapeHtml(user.nickname)}</div>
+                  <div class="meta">选择图片后会进入裁剪</div>
+                </div>
+              </div>
+              <div class="inline-actions">
+                <label class="ghost-btn profile-avatar-btn" for="user-avatar-input">选择头像</label>
+                <input id="user-avatar-input" type="file" accept="image/*" hidden />
+              </div>
+            </div>
+          `
+          : ''
+      }
+    </div>
+  `;
+
+  userSummary.querySelectorAll('[data-mine-section]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.mineSection = button.dataset.mineSection;
+      renderUserSummary();
+    });
+  });
+
+  userSummary.querySelector('#user-avatar-input')?.addEventListener('change', async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) {
+      return;
+    }
+
+    try {
+      await openAvatarCropper(file);
+    } catch (error) {
+      handleError(error);
+    }
+  });
+
+  userSummary.querySelector('#profile-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+
+    try {
+      const response = await api('/api/users/me', {
+        method: 'PATCH',
+        body: {
+          nickname: form.get('nickname'),
+          account: form.get('account'),
+          avatarUrl: state.session.user.avatarUrl,
+        },
+      });
+      state.session.user = response.user;
+      saveSession(state.session);
+      syncRememberedAccount(response.user.account);
+      await Promise.all([hydrateSideData(), hydrateConversations()]);
+      render();
+      showToast('资料已更新');
+    } catch (error) {
+      handleError(error);
+    }
+  });
+
+  userSummary.querySelector('#password-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const currentPassword = String(form.get('currentPassword') || '');
+    const newPassword = String(form.get('newPassword') || '');
+    const confirmPassword = String(form.get('confirmPassword') || '');
+
+    if (newPassword !== confirmPassword) {
+      showToast('两次输入的新密码不一致');
+      return;
+    }
+
+    try {
+      await api('/api/auth/password', {
+        method: 'PATCH',
+        body: {
+          currentPassword,
+          newPassword,
+        },
+      });
+      syncRememberedPassword(newPassword);
+      event.currentTarget.reset();
+      showToast('密码已更新');
+    } catch (error) {
+      handleError(error);
+    }
+  });
+  return;
   userSummary.innerHTML = `
     <div class="stack">
       <div class="user-card profile-hero">
@@ -766,6 +1046,7 @@ function renderContacts() {
             peerUserId: contact.id,
           },
         });
+        state.navSection = 'conversations';
         await hydrateConversations();
         await selectConversation(response.conversation.id);
       } catch (error) {
@@ -904,6 +1185,9 @@ function renderMessages() {
   }, 'large');
   chatTitle.textContent = state.activeConversation.name || '未命名会话';
   chatMeta.textContent = getConversationMeta(state.activeConversation);
+  requestAnimationFrame(() => {
+    applyChatHeight();
+  });
 
   if (state.messages.length === 0) {
     messageList.innerHTML = '<div class="meta">还没有消息，发一条试试吧。</div>';
