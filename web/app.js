@@ -241,10 +241,14 @@ async function loadMessages(conversationId) {
 
   const lastMessage = state.messages.at(-1);
   if (lastMessage) {
-    await api(`/api/conversations/${conversationId}/read`, {
-      method: 'POST',
-      body: { messageId: lastMessage.id },
-    });
+    try {
+      await api(`/api/conversations/${conversationId}/read`, {
+        method: 'POST',
+        body: { messageId: lastMessage.id },
+      });
+    } catch (error) {
+      console.error('Failed to mark conversation as read.', error);
+    }
   }
 }
 

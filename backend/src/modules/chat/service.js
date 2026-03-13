@@ -170,6 +170,7 @@ export class ChatService {
 
   async markRead(userId, conversationId, messageId) {
     await this.requireConversationMember(userId, conversationId);
+    assert(messageId, 400, 'Message ID is required.');
     const messages = await this.store.read(MESSAGES);
     const message = messages.find((item) => item.id === messageId && item.conversationId === conversationId);
     assert(message, 404, 'Message not found.');

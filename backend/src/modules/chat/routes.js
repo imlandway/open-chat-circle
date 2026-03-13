@@ -54,7 +54,7 @@ export async function registerChatRoutes(fastify) {
     const receipt = await fastify.chatService.markRead(
       request.currentUser.id,
       request.params.conversationId,
-      request.body.messageId,
+      request.body?.messageId,
     );
 
     const members = await fastify.chatService.getConversationMembers(request.params.conversationId);
