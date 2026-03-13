@@ -35,6 +35,7 @@ const groupDialog = document.querySelector('#group-dialog');
 const groupForm = document.querySelector('#group-form');
 const groupNameInput = document.querySelector('#group-name-input');
 const groupMemberList = document.querySelector('#group-member-list');
+const rememberedCredentials = loadRememberedCredentials();
 
 boot();
 
@@ -177,6 +178,23 @@ function resetToLoggedOut() {
   saveSession(null);
   renderAuthPanel('login');
   render();
+}
+
+function saveRememberedCredentials(account, password, remember) {
+  if (!remember) {
+    localStorage.removeItem('open-chat-circle-remembered');
+    return;
+  }
+
+  localStorage.setItem('open-chat-circle-remembered', JSON.stringify({
+    account,
+    password,
+  }));
+}
+
+function loadRememberedCredentials() {
+  const raw = localStorage.getItem('open-chat-circle-remembered');
+  return raw ? JSON.parse(raw) : null;
 }
 
 async function hydrateApp() {
@@ -377,8 +395,12 @@ function renderAuthPanel(mode) {
       mode === 'login'
         ? `
           <form id="login-form" class="stack">
-            <input name="account" type="text" placeholder="账号" required />
-            <input name="password" type="password" placeholder="密码" required />
+            <input name="account" type="text" placeholder="账号" value="${escapeAttribute(rememberedCredentials?.account || '')}" required />
+            <input name="password" type="password" placeholder="密码" value="${escapeAttribute(rememberedCredentials?.password || '')}" required />
+            <label class="checkbox-row">
+              <input name="rememberPassword" type="checkbox" ${rememberedCredentials ? 'checked' : ''} />
+              <span>记住密码</span>
+            </label>
             <button class="primary-btn" type="submit">登录</button>
           </form>
         `
@@ -411,6 +433,11 @@ function renderAuthPanel(mode) {
           password: form.get('password'),
         },
       });
+      saveRememberedCredentials(
+        form.get('account'),
+        form.get('password'),
+        form.get('rememberPassword') === 'on',
+      );
       state.session = session;
       saveSession(session);
       await hydrateApp();
@@ -534,6 +561,7 @@ function renderMessages() {
 
   for (const message of state.messages) {
     const mine = message.senderId === state.session.user.id;
+    const sender = state.activeConversation.members.find((member) => member.id === message.senderId);
     const row = document.createElement('div');
     row.className = `message-row ${mine ? 'mine' : ''}`;
 
@@ -542,12 +570,14 @@ function renderMessages() {
 
     if (message.type === 'image') {
       bubble.innerHTML = `
+        <div class="message-sender">${escapeHtml(sender?.nickname || '未知用户')}</div>
         <img src="${escapeAttribute(message.imageUrl)}" alt="${escapeAttribute(message.imageName || 'image')}" />
         <div>${escapeHtml(message.imageName || '图片')}</div>
         <div class="message-meta">${formatDateTime(message.createdAt)}</div>
       `;
     } else {
       bubble.innerHTML = `
+        <div class="message-sender">${escapeHtml(sender?.nickname || '未知用户')}</div>
         <div>${escapeHtml(message.text)}</div>
         <div class="message-meta">${formatDateTime(message.createdAt)}</div>
       `;

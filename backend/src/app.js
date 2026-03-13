@@ -42,7 +42,12 @@ class RealtimeHub {
       }
       for (const socket of sockets) {
         if (socket.readyState === 1) {
-          socket.send(JSON.stringify(event));
+          try {
+            socket.send(JSON.stringify(event));
+          } catch {
+            socket.close();
+            set.delete(socket);
+          }
         }
       }
     }

@@ -48,6 +48,7 @@ test('register -> create direct conversation -> send message -> mark read', asyn
 
   const direct = await chatService.createDirectConversation(alice.user.id, bob.user.id);
   assert.equal(direct.type, 'direct');
+  assert.equal(direct.name, 'Bob');
 
   const sent = await chatService.sendMessage(alice.user.id, direct.id, {
     type: 'text',
@@ -62,6 +63,7 @@ test('register -> create direct conversation -> send message -> mark read', asyn
   assert.equal(receipt.lastReadMessageId, sent.message.id);
 
   const bobConversations = await chatService.listConversations(bob.user.id);
+  assert.equal(bobConversations[0].name, 'Alice');
   assert.equal(bobConversations[0].unreadCount, 0);
 
   await rm(dataDir, { recursive: true, force: true });

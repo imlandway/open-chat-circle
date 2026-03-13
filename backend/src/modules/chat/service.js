@@ -43,7 +43,7 @@ export class ChatService {
           return new Date(message.createdAt).getTime() > new Date(readState.lastReadAt).getTime();
         }).length;
 
-        return this.serializeConversation(conversation, users, latestMessage, unreadCount);
+        return this.serializeConversation(conversation, users, userId, latestMessage, unreadCount);
       })
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }
@@ -163,7 +163,7 @@ export class ChatService {
     await this.markRead(userId, conversationId, message.id);
 
     return {
-      conversation,
+      conversation: await this.getConversationSummary(conversationId, userId),
       message,
     };
   }
@@ -223,12 +223,16 @@ export class ChatService {
     return conversation;
   }
 
-  serializeConversation(conversation, users, latestMessage, unreadCount) {
+  serializeConversation(conversation, users, viewerUserId, latestMessage, unreadCount) {
     const peers = users.filter((user) => conversation.memberIds.includes(user.id));
+    const directPeer = conversation.type === 'direct'
+      ? peers.find((user) => user.id !== viewerUserId)
+      : null;
+
     return {
       id: conversation.id,
       type: conversation.type,
-      name: conversation.name,
+      name: directPeer?.nickname || conversation.name,
       memberIds: conversation.memberIds,
       members: peers.map((user) => ({
         id: user.id,
