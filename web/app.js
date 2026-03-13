@@ -1,11 +1,12 @@
 const state = {
   session: loadSession(),
+  authMode: 'login',
   contacts: [],
   invites: [],
   conversations: [],
   messages: [],
   activeConversation: null,
-  socket: null,
+  realtimeSource: null,
   pollingTimer: null,
   avatarCrop: createEmptyAvatarCropState(),
 };
@@ -39,10 +40,8 @@ const groupNameInput = document.querySelector('#group-name-input');
 const groupMemberList = document.querySelector('#group-member-list');
 const closeGroupBtn = document.querySelector('#close-group-btn');
 const avatarDialog = document.querySelector('#avatar-dialog');
-const avatarCropCanvas = document.querySelector('#avatar-crop-canvas');
-const avatarZoomInput = document.querySelector('#avatar-zoom-input');
-const avatarOffsetXInput = document.querySelector('#avatar-offset-x-input');
-const avatarOffsetYInput = document.querySelector('#avatar-offset-y-input');
+const avatarCropStage = document.querySelector('#avatar-crop-stage');
+const avatarCropImage = document.querySelector('#avatar-crop-image');
 const closeAvatarBtn = document.querySelector('#close-avatar-btn');
 const saveAvatarBtn = document.querySelector('#save-avatar-btn');
 
@@ -50,27 +49,16 @@ boot();
 
 function boot() {
   wireStaticEvents();
+  render();
 
-  if (state.session?.sessionToken) {
-    hydrateApp().catch((error) => {
-      resetToLoggedOut();
-      handleError(error);
-    });
+  if (!state.session?.sessionToken) {
     return;
   }
 
-  render();
-}
-
-function createEmptyAvatarCropState() {
-  return {
-    fileName: '',
-    objectUrl: '',
-    image: null,
-    zoom: 1,
-    offsetX: 0,
-    offsetY: 0,
-  };
+  hydrateApp().catch((error) => {
+    resetToLoggedOut();
+    handleError(error);
+  });
 }
 
 function wireStaticEvents() {
@@ -84,14 +72,14 @@ function wireStaticEvents() {
 
   createInviteBtn.addEventListener('click', async () => {
     try {
-      const invite = await api('/api/invites', {
+      const response = await api('/api/invites', {
         method: 'POST',
         body: {
           uses: 5,
           expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
         },
       });
-      showToast(`已生成邀请码 ${invite.invite.code}`);
+      showToast(`已生成邀请码 ${response.invite.code}`);
       await hydrateSideData();
     } catch (error) {
       handleError(error);
@@ -109,21 +97,22 @@ function wireStaticEvents() {
 
   groupForm.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const memberIds = [...groupMemberList.querySelectorAll('input[type="checkbox"]:checked')]
-      .map((checkbox) => checkbox.value);
+    const memberIds = [...groupMemberList.querySelectorAll('input[type="checkbox"]:checked')].map(
+      (checkbox) => checkbox.value,
+    );
 
     try {
-      const result = await api('/api/conversations/group', {
+      const response = await api('/api/conversations/group', {
         method: 'POST',
         body: {
           name: groupNameInput.value.trim(),
           memberIds,
         },
       });
-      groupDialog.close();
       groupForm.reset();
+      groupDialog.close();
       await hydrateConversations();
-      await selectConversation(result.conversation.id);
+      await selectConversation(response.conversation.id);
     } catch (error) {
       handleError(error);
     }
@@ -131,84 +120,19 @@ function wireStaticEvents() {
 
   messageForm.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (!state.activeConversation) {
-      return;
-    }
-
-    const text = messageInput.value.trim();
-    if (!text) {
-      return;
-    }
-
-    const submittedAt = Date.now();
-    messageInput.value = '';
-
-    try {
-      await api(`/api/conversations/${state.activeConversation.id}/messages`, {
-        method: 'POST',
-        body: {
-          type: 'text',
-          text,
-        },
-      });
-      await refreshActiveConversation();
-    } catch (error) {
-      await refreshActiveConversation();
-      if (didMessagePersist({ type: 'text', text, submittedAt })) {
-        showToast('消息已发送，界面已自动刷新');
-        return;
-      }
-      messageInput.value = text;
-      handleError(error);
-    }
+    await submitTextMessage();
   });
 
   imageInput.addEventListener('change', async () => {
-    const file = imageInput.files?.[0];
-    if (!file || !state.activeConversation) {
-      return;
-    }
-
-    try {
-      const upload = await uploadImage(file);
-      await api(`/api/conversations/${state.activeConversation.id}/messages`, {
-        method: 'POST',
-        body: {
-          type: 'image',
-          imageUrl: upload.url,
-          imageName: upload.name,
-        },
-      });
-      await refreshActiveConversation();
-    } catch (error) {
-      await refreshActiveConversation();
-      if (didMessagePersist({ type: 'image', imageName: file.name, submittedAt: Date.now() - 1000 })) {
-        showToast('图片已发送，界面已自动刷新');
-      } else {
-        handleError(error);
-      }
-    } finally {
-      imageInput.value = '';
-    }
-  });
-
-  avatarZoomInput.addEventListener('input', () => {
-    state.avatarCrop.zoom = Number(avatarZoomInput.value);
-    renderAvatarCropPreview();
-  });
-
-  avatarOffsetXInput.addEventListener('input', () => {
-    state.avatarCrop.offsetX = Number(avatarOffsetXInput.value);
-    renderAvatarCropPreview();
-  });
-
-  avatarOffsetYInput.addEventListener('input', () => {
-    state.avatarCrop.offsetY = Number(avatarOffsetYInput.value);
-    renderAvatarCropPreview();
+    await submitImageMessage();
   });
 
   closeAvatarBtn.addEventListener('click', closeAvatarCropper);
   avatarDialog.addEventListener('close', resetAvatarCropper);
+  avatarDialog.addEventListener('cancel', (event) => {
+    event.preventDefault();
+    closeAvatarCropper();
+  });
 
   saveAvatarBtn.addEventListener('click', async () => {
     try {
@@ -231,19 +155,58 @@ function wireStaticEvents() {
       handleError(error);
     }
   });
+
+  avatarCropStage.addEventListener('pointerdown', onAvatarPointerDown);
+  avatarCropStage.addEventListener('pointermove', onAvatarPointerMove);
+  avatarCropStage.addEventListener('pointerup', onAvatarPointerEnd);
+  avatarCropStage.addEventListener('pointercancel', onAvatarPointerEnd);
+  avatarCropStage.addEventListener('wheel', onAvatarWheel, { passive: false });
+
+  window.addEventListener('resize', () => {
+    if (avatarDialog.open && state.avatarCrop.image) {
+      initializeAvatarCrop();
+    }
+  });
+
+  window.addEventListener('beforeunload', () => {
+    disconnectRealtime();
+  });
 }
 
-function resetToLoggedOut() {
-  disconnectSocket();
-  closeAvatarCropper();
-  state.session = null;
-  state.contacts = [];
-  state.invites = [];
-  state.conversations = [];
-  state.messages = [];
-  state.activeConversation = null;
-  saveSession(null);
-  render();
+function createEmptyAvatarCropState() {
+  return {
+    fileName: '',
+    objectUrl: '',
+    image: null,
+    baseScale: 1,
+    zoom: 1,
+    offsetX: 0,
+    offsetY: 0,
+    pointers: new Map(),
+    gesture: null,
+  };
+}
+
+function loadSession() {
+  const raw = localStorage.getItem('open-chat-circle-session');
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    localStorage.removeItem('open-chat-circle-session');
+    return null;
+  }
+}
+
+function saveSession(session) {
+  if (!session) {
+    localStorage.removeItem('open-chat-circle-session');
+    return;
+  }
+  localStorage.setItem('open-chat-circle-session', JSON.stringify(session));
 }
 
 function saveRememberedCredentials(account, password, remember) {
@@ -260,19 +223,28 @@ function saveRememberedCredentials(account, password, remember) {
 
 function loadRememberedCredentials() {
   const raw = localStorage.getItem('open-chat-circle-remembered');
-  return raw ? JSON.parse(raw) : null;
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    localStorage.removeItem('open-chat-circle-remembered');
+    return null;
+  }
 }
 
 async function hydrateApp() {
   await ensureSession();
   await Promise.all([hydrateSideData(), hydrateConversations()]);
-  connectSocket();
+  connectRealtime();
   render();
 }
 
 async function ensureSession() {
-  const me = await api('/api/auth/me');
-  state.session.user = me.user;
+  const response = await api('/api/auth/me');
+  state.session.user = response.user;
   saveSession(state.session);
 }
 
@@ -295,12 +267,8 @@ async function hydrateConversations() {
   state.conversations = response.conversations;
 
   if (state.activeConversation) {
-    const next = state.conversations.find((item) => item.id === state.activeConversation.id);
-    if (next) {
-      state.activeConversation = next;
-      await loadMessages(next.id, { markAsRead: false });
-    } else {
-      state.activeConversation = null;
+    state.activeConversation = state.conversations.find((item) => item.id === state.activeConversation.id) ?? null;
+    if (!state.activeConversation) {
       state.messages = [];
     }
   }
@@ -315,48 +283,104 @@ async function selectConversation(conversationId) {
   }
 
   state.activeConversation = conversation;
+  render();
   await loadMessages(conversation.id, { markAsRead: true });
   render();
 }
 
-async function loadMessages(conversationId, options = { markAsRead: true }) {
+async function loadMessages(conversationId, { markAsRead = true } = {}) {
   const response = await api(`/api/conversations/${conversationId}/messages`);
   state.messages = response.messages;
 
-  if (!options.markAsRead) {
-    return;
-  }
-
   const lastMessage = state.messages.at(-1);
-  if (!lastMessage) {
+  if (!markAsRead || !lastMessage || lastMessage.senderId === state.session.user.id) {
     return;
   }
 
   try {
     await api(`/api/conversations/${conversationId}/read`, {
       method: 'POST',
-      body: { messageId: lastMessage.id },
+      body: {
+        messageId: lastMessage.id,
+      },
     });
-    const conversation = state.conversations.find((item) => item.id === conversationId);
-    if (conversation) {
-      conversation.unreadCount = 0;
-    }
-    if (state.activeConversation?.id === conversationId) {
-      state.activeConversation.unreadCount = 0;
-    }
+    setConversationUnreadCount(conversationId, 0);
   } catch (error) {
     console.error('Failed to mark conversation as read.', error);
   }
 }
 
-async function refreshActiveConversation() {
+async function refreshActiveConversation(markAsRead = false) {
   if (!state.activeConversation) {
     return;
   }
 
   await hydrateConversations();
-  await loadMessages(state.activeConversation.id, { markAsRead: false });
+  if (!state.activeConversation) {
+    return;
+  }
+  await loadMessages(state.activeConversation.id, { markAsRead });
   render();
+}
+
+function connectRealtime() {
+  disconnectRealtime();
+
+  if (!state.session?.sessionToken) {
+    connectionStatus.textContent = '未连接';
+    return;
+  }
+
+  if (!('EventSource' in window)) {
+    connectionStatus.textContent = '浏览器不支持实时连接，已启用自动刷新';
+    startPollingFallback();
+    return;
+  }
+
+  connectionStatus.textContent = '正在连接实时同步...';
+  const source = new EventSource(`/api/events?token=${encodeURIComponent(state.session.sessionToken)}`);
+  state.realtimeSource = source;
+
+  source.addEventListener('ready', () => {
+    connectionStatus.textContent = '实时同步已连接';
+    stopPollingFallback();
+  });
+
+  source.onopen = () => {
+    connectionStatus.textContent = '实时同步已连接';
+    stopPollingFallback();
+  };
+
+  source.onerror = () => {
+    connectionStatus.textContent = '连接波动，已启用自动刷新';
+    startPollingFallback();
+  };
+
+  source.onmessage = (event) => {
+    if (!event.data) {
+      return;
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(event.data);
+    } catch (error) {
+      console.error('Failed to parse realtime payload.', error);
+      return;
+    }
+
+    handleRealtimeEvent(payload).catch((error) => {
+      console.error('Failed to handle realtime event.', error);
+    });
+  };
+}
+
+function disconnectRealtime() {
+  if (state.realtimeSource) {
+    state.realtimeSource.close();
+    state.realtimeSource = null;
+  }
+  stopPollingFallback();
 }
 
 function startPollingFallback() {
@@ -372,9 +396,9 @@ function startPollingFallback() {
       }
       render();
     } catch (error) {
-      console.error(error);
+      console.error('Polling refresh failed.', error);
     }
-  }, 4000);
+  }, 2500);
 }
 
 function stopPollingFallback() {
@@ -386,53 +410,29 @@ function stopPollingFallback() {
   state.pollingTimer = null;
 }
 
-function connectSocket() {
-  disconnectSocket();
-  if (!state.session?.sessionToken) {
-    connectionStatus.textContent = '未连接';
+async function handleRealtimeEvent(event) {
+  if (!event?.type) {
     return;
   }
 
-  connectionStatus.textContent = '正在连接...';
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const socket = new WebSocket(
-    `${protocol}//${location.host}/ws?token=${encodeURIComponent(state.session.sessionToken)}`,
-  );
-  state.socket = socket;
-
-  socket.addEventListener('open', () => {
-    stopPollingFallback();
-    connectionStatus.textContent = '实时连接已开启';
-  });
-
-  socket.addEventListener('close', () => {
-    connectionStatus.textContent = '连接不稳定，已切换自动刷新';
-    startPollingFallback();
-    window.setTimeout(() => {
-      if (state.session?.sessionToken) {
-        connectSocket();
-      }
-    }, 2000);
-  });
-
-  socket.addEventListener('message', async (event) => {
-    const payload = JSON.parse(event.data);
-    if (payload.type === 'message.created' || payload.type === 'read.updated') {
-      await hydrateConversations();
-      if (state.activeConversation?.id === payload.payload.conversationId) {
-        await loadMessages(state.activeConversation.id, { markAsRead: false });
-      }
-      render();
+  if (event.type === 'message.created') {
+    await hydrateConversations();
+    if (state.activeConversation?.id === event.payload.conversationId) {
+      await loadMessages(state.activeConversation.id, {
+        markAsRead: event.payload.senderId !== state.session.user.id,
+      });
     }
-  });
-}
-
-function disconnectSocket() {
-  if (state.socket) {
-    state.socket.close();
-    state.socket = null;
+    render();
+    return;
   }
-  stopPollingFallback();
+
+  if (event.type === 'read.updated') {
+    await hydrateConversations();
+    if (state.activeConversation?.id === event.payload.conversationId) {
+      await loadMessages(state.activeConversation.id, { markAsRead: false });
+    }
+    render();
+  }
 }
 
 function render() {
@@ -444,7 +444,7 @@ function render() {
   createGroupBtn.classList.toggle('hidden', !authenticated);
 
   if (!authenticated) {
-    renderAuthPanel('login');
+    renderAuthPanel();
     conversationList.innerHTML = '';
     contactsList.innerHTML = '';
     inviteList.innerHTML = '';
@@ -463,40 +463,58 @@ function render() {
   renderMessages();
 }
 
-function renderAuthPanel(mode) {
-  const rememberedCredentials = loadRememberedCredentials();
+function renderAuthPanel() {
+  const remembered = loadRememberedCredentials();
   authPanel.innerHTML = `
     <div class="auth-tabs">
-      <button class="auth-tab ghost-btn ${mode === 'login' ? 'active' : ''}" data-mode="login" type="button">登录</button>
-      <button class="auth-tab ghost-btn ${mode === 'register' ? 'active' : ''}" data-mode="register" type="button">邀请码注册</button>
+      <button class="auth-tab ghost-btn ${state.authMode === 'login' ? 'active' : ''}" type="button" data-auth-mode="login">登录</button>
+      <button class="auth-tab ghost-btn ${state.authMode === 'register' ? 'active' : ''}" type="button" data-auth-mode="register">邀请码注册</button>
     </div>
     ${
-      mode === 'login'
+      state.authMode === 'login'
         ? `
-          <form id="login-form" class="stack">
-            <input name="account" type="text" placeholder="账号" value="${escapeAttribute(rememberedCredentials?.account || '')}" required />
-            <input name="password" type="password" placeholder="密码" value="${escapeAttribute(rememberedCredentials?.password || '')}" required />
+          <form id="login-form" class="auth-form stack">
+            <label class="field">
+              <span>账号</span>
+              <input name="account" type="text" value="${escapeAttribute(remembered?.account || '')}" required />
+            </label>
+            <label class="field">
+              <span>密码</span>
+              <input name="password" type="password" value="${escapeAttribute(remembered?.password || '')}" required />
+            </label>
             <label class="checkbox-row">
-              <input name="rememberPassword" type="checkbox" ${rememberedCredentials ? 'checked' : ''} />
+              <input name="rememberPassword" type="checkbox" ${remembered ? 'checked' : ''} />
               <span>记住密码</span>
             </label>
             <button class="primary-btn" type="submit">登录</button>
           </form>
         `
         : `
-          <form id="register-form" class="stack">
-            <input name="inviteCode" type="text" placeholder="邀请码" value="OPEN-CIRCLE-2026" required />
-            <input name="nickname" type="text" placeholder="昵称" required />
-            <input name="password" type="password" placeholder="密码（至少 8 位）" required />
+          <form id="register-form" class="auth-form stack">
+            <label class="field">
+              <span>邀请码</span>
+              <input name="inviteCode" type="text" value="OPEN-CIRCLE-2026" required />
+            </label>
+            <label class="field">
+              <span>昵称</span>
+              <input name="nickname" type="text" required />
+            </label>
+            <label class="field">
+              <span>密码</span>
+              <input name="password" type="password" minlength="8" required />
+            </label>
             <button class="primary-btn" type="submit">注册并进入</button>
           </form>
         `
     }
-    <p class="meta">管理员默认账号：captain / chatcircle123</p>
+    <p class="meta hint">管理员默认账号：captain</p>
   `;
 
-  authPanel.querySelectorAll('[data-mode]').forEach((button) => {
-    button.addEventListener('click', () => renderAuthPanel(button.dataset.mode));
+  authPanel.querySelectorAll('[data-auth-mode]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.authMode = button.dataset.authMode;
+      renderAuthPanel();
+    });
   });
 
   authPanel.querySelector('#login-form')?.addEventListener('submit', async (event) => {
@@ -588,14 +606,14 @@ function renderContacts() {
   contactsList.innerHTML = '';
 
   if (state.contacts.length === 0) {
-    contactsList.innerHTML = '<div class="card">还没有联系人</div>';
+    contactsList.innerHTML = '<div class="invite-item">还没有联系人</div>';
     return;
   }
 
   for (const contact of state.contacts) {
-    const element = document.createElement('div');
-    element.className = 'contact-item';
-    element.innerHTML = `
+    const card = document.createElement('div');
+    card.className = 'contact-item';
+    card.innerHTML = `
       <div class="contact-main">
         ${renderAvatar(contact)}
         <div class="contact-text">
@@ -604,11 +622,13 @@ function renderContacts() {
         </div>
       </div>
     `;
-    element.addEventListener('click', async () => {
+    card.addEventListener('click', async () => {
       try {
         const response = await api('/api/conversations/direct', {
           method: 'POST',
-          body: { peerUserId: contact.id },
+          body: {
+            peerUserId: contact.id,
+          },
         });
         await hydrateConversations();
         await selectConversation(response.conversation.id);
@@ -616,7 +636,7 @@ function renderContacts() {
         handleError(error);
       }
     });
-    contactsList.appendChild(element);
+    contactsList.appendChild(card);
   }
 }
 
@@ -624,20 +644,20 @@ function renderInvites() {
   inviteList.innerHTML = '';
 
   if (state.invites.length === 0) {
-    inviteList.innerHTML = '<div class="card">还没有邀请码</div>';
+    inviteList.innerHTML = '<div class="invite-item">还没有邀请码</div>';
     return;
   }
 
   for (const invite of state.invites) {
-    const element = document.createElement('div');
-    element.className = 'invite-item';
-    element.innerHTML = `
+    const card = document.createElement('div');
+    card.className = 'invite-item';
+    card.innerHTML = `
       <div>
         <strong>${escapeHtml(invite.code)}</strong>
         <div class="meta">${invite.usedCount}/${invite.maxUses} 次 · ${escapeHtml(invite.status)}</div>
       </div>
     `;
-    inviteList.appendChild(element);
+    inviteList.appendChild(card);
   }
 }
 
@@ -645,19 +665,16 @@ function renderConversations() {
   conversationList.innerHTML = '';
 
   if (state.conversations.length === 0) {
-    conversationList.innerHTML = '<div class="card">还没有会话</div>';
+    conversationList.innerHTML = '<div class="invite-item">还没有会话</div>';
     return;
   }
 
   for (const conversation of state.conversations) {
-    const element = document.createElement('div');
-    element.className = `conversation-item ${state.activeConversation?.id === conversation.id ? 'active' : ''}`;
-    element.innerHTML = `
+    const item = document.createElement('div');
+    item.className = `conversation-item ${state.activeConversation?.id === conversation.id ? 'active' : ''}`;
+    item.innerHTML = `
       <div class="conversation-main">
-        ${renderAvatar({
-          nickname: conversation.name,
-          avatarUrl: conversation.avatarUrl,
-        })}
+        ${renderAvatar({ nickname: conversation.name, avatarUrl: conversation.avatarUrl })}
         <div class="conversation-text">
           <div class="conversation-title">${escapeHtml(conversation.name || '未命名会话')}</div>
           <div class="conversation-preview">${escapeHtml(getConversationPreview(conversation))}</div>
@@ -666,16 +683,16 @@ function renderConversations() {
       <div class="conversation-side">
         <span class="meta">${formatConversationTime(conversation.updatedAt)}</span>
         ${
-          conversation.unreadCount
+          conversation.unreadCount > 0
             ? `<span class="badge">${conversation.unreadCount}</span>`
             : '<span class="status-pill">已读</span>'
         }
       </div>
     `;
-    element.addEventListener('click', () => {
+    item.addEventListener('click', () => {
       selectConversation(conversation.id).catch(handleError);
     });
-    conversationList.appendChild(element);
+    conversationList.appendChild(item);
   }
 }
 
@@ -694,39 +711,44 @@ function renderMessages() {
   }, 'large');
   chatTitle.textContent = state.activeConversation.name || '未命名会话';
   chatMeta.textContent = getConversationMeta(state.activeConversation);
+
+  if (state.messages.length === 0) {
+    messageList.innerHTML = '<div class="meta">还没有消息，发一条试试吧。</div>';
+    return;
+  }
+
   messageList.innerHTML = '';
 
   for (const message of state.messages) {
     const mine = message.senderId === state.session.user.id;
-    const sender = message.sender ?? state.activeConversation.members.find((member) => member.id === message.senderId);
     const row = document.createElement('div');
     row.className = `message-row ${mine ? 'mine' : ''}`;
 
     if (!mine) {
-      row.insertAdjacentHTML('beforeend', renderAvatar(sender ?? { nickname: '?' }, 'small'));
+      const sender = message.sender
+        ?? state.activeConversation.members.find((member) => member.id === message.senderId)
+        ?? { nickname: '?' };
+      row.insertAdjacentHTML('beforeend', renderAvatar(sender, 'small'));
     }
 
     const bubble = document.createElement('div');
     bubble.className = 'message-bubble';
-
-    if (message.type === 'image') {
-      bubble.innerHTML = `
-        <img src="${escapeAttribute(message.imageUrl)}" alt="${escapeAttribute(message.imageName || '图片')}" />
+    bubble.innerHTML = message.type === 'image'
+      ? `
+        <img class="message-image" src="${escapeAttribute(message.imageUrl)}" alt="${escapeAttribute(message.imageName || '图片')}" />
         <div class="message-content">${escapeHtml(message.imageName || '图片')}</div>
         <div class="message-meta">
           <span>${formatDateTime(message.createdAt)}</span>
           ${mine ? `<span class="message-receipt">${escapeHtml(getReceiptText(message, state.activeConversation.type))}</span>` : ''}
         </div>
-      `;
-    } else {
-      bubble.innerHTML = `
+      `
+      : `
         <div class="message-content">${escapeHtml(message.text)}</div>
         <div class="message-meta">
           <span>${formatDateTime(message.createdAt)}</span>
           ${mine ? `<span class="message-receipt">${escapeHtml(getReceiptText(message, state.activeConversation.type))}</span>` : ''}
         </div>
       `;
-    }
 
     row.appendChild(bubble);
     messageList.appendChild(row);
@@ -738,34 +760,106 @@ function renderMessages() {
 function renderGroupMembers() {
   groupMemberList.innerHTML = '';
 
+  if (state.contacts.length === 0) {
+    groupMemberList.innerHTML = '<div class="invite-item">当前没有可选联系人</div>';
+    return;
+  }
+
   for (const contact of state.contacts) {
-    const row = document.createElement('label');
-    row.className = 'checkbox-row';
-    row.innerHTML = `
+    const label = document.createElement('label');
+    label.className = 'checkbox-row';
+    label.innerHTML = `
       <input type="checkbox" value="${escapeAttribute(contact.id)}" />
       ${renderAvatar(contact, 'xs')}
       <span>${escapeHtml(contact.nickname)} <span class="meta">@${escapeHtml(contact.account)}</span></span>
     `;
-    groupMemberList.appendChild(row);
+    groupMemberList.appendChild(label);
+  }
+}
+
+async function submitTextMessage() {
+  if (!state.activeConversation) {
+    return;
+  }
+
+  const text = messageInput.value.trim();
+  if (!text) {
+    return;
+  }
+
+  const submittedAt = Date.now();
+
+  try {
+    const response = await api(`/api/conversations/${state.activeConversation.id}/messages`, {
+      method: 'POST',
+      body: {
+        type: 'text',
+        text,
+      },
+    });
+    messageInput.value = '';
+    mergeConversation(response.conversation);
+    upsertMessage(response.message);
+    render();
+  } catch (error) {
+    await refreshActiveConversation(false);
+    if (didMessagePersist({ type: 'text', text, submittedAt })) {
+      messageInput.value = '';
+      showToast('消息已发出');
+      return;
+    }
+    handleError(error);
+  }
+}
+
+async function submitImageMessage() {
+  const file = imageInput.files?.[0];
+  imageInput.value = '';
+
+  if (!file || !state.activeConversation) {
+    return;
+  }
+
+  const submittedAt = Date.now();
+
+  try {
+    const upload = await uploadImage(file);
+    const response = await api(`/api/conversations/${state.activeConversation.id}/messages`, {
+      method: 'POST',
+      body: {
+        type: 'image',
+        imageUrl: upload.url,
+        imageName: upload.name,
+      },
+    });
+    mergeConversation(response.conversation);
+    upsertMessage(response.message);
+    render();
+  } catch (error) {
+    await refreshActiveConversation(false);
+    if (didMessagePersist({ type: 'image', imageName: file.name, submittedAt })) {
+      showToast('图片已发出');
+      return;
+    }
+    handleError(error);
   }
 }
 
 async function openAvatarCropper(file) {
   const objectUrl = URL.createObjectURL(file);
   const image = await loadImage(objectUrl);
-  state.avatarCrop = {
-    fileName: file.name || 'avatar.png',
-    objectUrl,
-    image,
-    zoom: 1,
-    offsetX: 0,
-    offsetY: 0,
-  };
-  avatarZoomInput.value = '1';
-  avatarOffsetXInput.value = '0';
-  avatarOffsetYInput.value = '0';
+
+  state.avatarCrop = createEmptyAvatarCropState();
+  state.avatarCrop.fileName = file.name || 'avatar.png';
+  state.avatarCrop.objectUrl = objectUrl;
+  state.avatarCrop.image = image;
+
+  avatarCropImage.src = objectUrl;
   avatarDialog.showModal();
-  renderAvatarCropPreview();
+
+  requestAnimationFrame(() => {
+    initializeAvatarCrop();
+  });
 }
 
 function closeAvatarCropper() {
@@ -780,86 +874,235 @@ function resetAvatarCropper() {
   if (state.avatarCrop.objectUrl) {
     URL.revokeObjectURL(state.avatarCrop.objectUrl);
   }
+
+  avatarCropImage.removeAttribute('src');
+  avatarCropImage.style.transform = '';
+  avatarCropStage.classList.remove('dragging');
   state.avatarCrop = createEmptyAvatarCropState();
-  const ctx = avatarCropCanvas.getContext('2d');
-  ctx.clearRect(0, 0, avatarCropCanvas.width, avatarCropCanvas.height);
 }
 
-function renderAvatarCropPreview() {
-  const { image, zoom, offsetX, offsetY } = state.avatarCrop;
-  const ctx = avatarCropCanvas.getContext('2d');
-  const cropSize = avatarCropCanvas.width;
-  ctx.clearRect(0, 0, cropSize, cropSize);
-  ctx.fillStyle = '#f5fbf9';
-  ctx.fillRect(0, 0, cropSize, cropSize);
-
-  if (!image) {
+function initializeAvatarCrop() {
+  if (!state.avatarCrop.image) {
     return;
   }
 
-  const transform = calculateAvatarTransform({
-    imageWidth: image.width,
-    imageHeight: image.height,
-    cropSize,
-    zoom,
-    offsetXPercent: offsetX,
-    offsetYPercent: offsetY,
-  });
-
-  ctx.drawImage(
-    image,
-    transform.drawX,
-    transform.drawY,
-    transform.drawWidth,
-    transform.drawHeight,
+  const rect = avatarCropStage.getBoundingClientRect();
+  state.avatarCrop.baseScale = Math.max(
+    rect.width / state.avatarCrop.image.width,
+    rect.height / state.avatarCrop.image.height,
   );
-
-  ctx.strokeStyle = 'rgba(15, 118, 110, 0.9)';
-  ctx.lineWidth = 4;
-  ctx.strokeRect(2, 2, cropSize - 4, cropSize - 4);
+  state.avatarCrop.zoom = 1;
+  state.avatarCrop.offsetX = 0;
+  state.avatarCrop.offsetY = 0;
+  state.avatarCrop.pointers.clear();
+  state.avatarCrop.gesture = null;
+  renderAvatarCropPreview();
 }
 
-function calculateAvatarTransform({ imageWidth, imageHeight, cropSize, zoom, offsetXPercent, offsetYPercent }) {
-  const baseScale = Math.max(cropSize / imageWidth, cropSize / imageHeight);
-  const scale = baseScale * zoom;
-  const drawWidth = imageWidth * scale;
-  const drawHeight = imageHeight * scale;
-  const maxOffsetX = Math.max(0, (drawWidth - cropSize) / 2);
-  const maxOffsetY = Math.max(0, (drawHeight - cropSize) / 2);
-  const actualOffsetX = (offsetXPercent / 100) * maxOffsetX;
-  const actualOffsetY = (offsetYPercent / 100) * maxOffsetY;
+function renderAvatarCropPreview() {
+  if (!state.avatarCrop.image) {
+    return;
+  }
 
+  clampAvatarCropOffsets();
+  const totalScale = state.avatarCrop.baseScale * state.avatarCrop.zoom;
+  avatarCropImage.style.width = `${state.avatarCrop.image.width}px`;
+  avatarCropImage.style.height = `${state.avatarCrop.image.height}px`;
+  avatarCropImage.style.transform = `translate(-50%, -50%) translate(${state.avatarCrop.offsetX}px, ${state.avatarCrop.offsetY}px) scale(${totalScale})`;
+}
+
+function clampAvatarCropOffsets() {
+  if (!state.avatarCrop.image) {
+    return;
+  }
+
+  const rect = avatarCropStage.getBoundingClientRect();
+  const totalScale = state.avatarCrop.baseScale * state.avatarCrop.zoom;
+  const maxOffsetX = Math.max(0, (state.avatarCrop.image.width * totalScale - rect.width) / 2);
+  const maxOffsetY = Math.max(0, (state.avatarCrop.image.height * totalScale - rect.height) / 2);
+
+  state.avatarCrop.offsetX = clamp(state.avatarCrop.offsetX, -maxOffsetX, maxOffsetX);
+  state.avatarCrop.offsetY = clamp(state.avatarCrop.offsetY, -maxOffsetY, maxOffsetY);
+}
+
+function onAvatarPointerDown(event) {
+  if (!state.avatarCrop.image) {
+    return;
+  }
+
+  avatarCropStage.setPointerCapture(event.pointerId);
+  state.avatarCrop.pointers.set(event.pointerId, {
+    clientX: event.clientX,
+    clientY: event.clientY,
+  });
+
+  if (state.avatarCrop.pointers.size === 1) {
+    state.avatarCrop.gesture = {
+      type: 'pan',
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startOffsetX: state.avatarCrop.offsetX,
+      startOffsetY: state.avatarCrop.offsetY,
+    };
+    avatarCropStage.classList.add('dragging');
+    return;
+  }
+
+  if (state.avatarCrop.pointers.size === 2) {
+    startAvatarPinchGesture();
+  }
+}
+
+function onAvatarPointerMove(event) {
+  if (!state.avatarCrop.image || !state.avatarCrop.pointers.has(event.pointerId)) {
+    return;
+  }
+
+  state.avatarCrop.pointers.set(event.pointerId, {
+    clientX: event.clientX,
+    clientY: event.clientY,
+  });
+
+  if (!state.avatarCrop.gesture) {
+    return;
+  }
+
+  if (state.avatarCrop.gesture.type === 'pan' && state.avatarCrop.pointers.size === 1) {
+    state.avatarCrop.offsetX = state.avatarCrop.gesture.startOffsetX + (event.clientX - state.avatarCrop.gesture.startClientX);
+    state.avatarCrop.offsetY = state.avatarCrop.gesture.startOffsetY + (event.clientY - state.avatarCrop.gesture.startClientY);
+    renderAvatarCropPreview();
+    return;
+  }
+
+  if (state.avatarCrop.gesture.type === 'pinch' && state.avatarCrop.pointers.size >= 2) {
+    const [first, second] = [...state.avatarCrop.pointers.values()];
+    const currentDistance = getDistance(first, second);
+    const midpoint = getMidpoint(first, second);
+    const nextZoom = clamp(
+      state.avatarCrop.gesture.startZoom * (currentDistance / state.avatarCrop.gesture.startDistance),
+      1,
+      4,
+    );
+    const nextScale = state.avatarCrop.baseScale * nextZoom;
+    const focus = toCropCoordinates(midpoint.clientX, midpoint.clientY);
+
+    state.avatarCrop.zoom = nextZoom;
+    state.avatarCrop.offsetX = focus.x - state.avatarCrop.gesture.focusImageX * nextScale;
+    state.avatarCrop.offsetY = focus.y - state.avatarCrop.gesture.focusImageY * nextScale;
+    renderAvatarCropPreview();
+  }
+}
+
+function onAvatarPointerEnd(event) {
+  if (!state.avatarCrop.pointers.has(event.pointerId)) {
+    return;
+  }
+
+  state.avatarCrop.pointers.delete(event.pointerId);
+
+  if (state.avatarCrop.pointers.size === 0) {
+    state.avatarCrop.gesture = null;
+    avatarCropStage.classList.remove('dragging');
+    return;
+  }
+
+  if (state.avatarCrop.pointers.size === 1) {
+    const remaining = [...state.avatarCrop.pointers.values()][0];
+    state.avatarCrop.gesture = {
+      type: 'pan',
+      startClientX: remaining.clientX,
+      startClientY: remaining.clientY,
+      startOffsetX: state.avatarCrop.offsetX,
+      startOffsetY: state.avatarCrop.offsetY,
+    };
+    avatarCropStage.classList.add('dragging');
+    return;
+  }
+
+  startAvatarPinchGesture();
+}
+
+function startAvatarPinchGesture() {
+  const [first, second] = [...state.avatarCrop.pointers.values()];
+  const midpoint = getMidpoint(first, second);
+  const focus = toCropCoordinates(midpoint.clientX, midpoint.clientY);
+  const totalScale = state.avatarCrop.baseScale * state.avatarCrop.zoom;
+
+  state.avatarCrop.gesture = {
+    type: 'pinch',
+    startZoom: state.avatarCrop.zoom,
+    startDistance: getDistance(first, second),
+    focusImageX: (focus.x - state.avatarCrop.offsetX) / totalScale,
+    focusImageY: (focus.y - state.avatarCrop.offsetY) / totalScale,
+  };
+  avatarCropStage.classList.remove('dragging');
+}
+
+function onAvatarWheel(event) {
+  if (!state.avatarCrop.image) {
+    return;
+  }
+
+  event.preventDefault();
+  const factor = event.deltaY < 0 ? 1.1 : 0.9;
+  zoomAvatarCrop(clamp(state.avatarCrop.zoom * factor, 1, 4), event.clientX, event.clientY);
+}
+
+function zoomAvatarCrop(nextZoom, clientX, clientY) {
+  const focus = toCropCoordinates(clientX, clientY);
+  const oldScale = state.avatarCrop.baseScale * state.avatarCrop.zoom;
+  const nextScale = state.avatarCrop.baseScale * nextZoom;
+  const imageX = (focus.x - state.avatarCrop.offsetX) / oldScale;
+  const imageY = (focus.y - state.avatarCrop.offsetY) / oldScale;
+
+  state.avatarCrop.zoom = nextZoom;
+  state.avatarCrop.offsetX = focus.x - imageX * nextScale;
+  state.avatarCrop.offsetY = focus.y - imageY * nextScale;
+  renderAvatarCropPreview();
+}
+
+function toCropCoordinates(clientX, clientY) {
+  const rect = avatarCropStage.getBoundingClientRect();
   return {
-    drawWidth,
-    drawHeight,
-    drawX: (cropSize - drawWidth) / 2 + actualOffsetX,
-    drawY: (cropSize - drawHeight) / 2 + actualOffsetY,
+    x: clientX - (rect.left + rect.width / 2),
+    y: clientY - (rect.top + rect.height / 2),
+  };
+}
+
+function getDistance(first, second) {
+  return Math.hypot(second.clientX - first.clientX, second.clientY - first.clientY);
+}
+
+function getMidpoint(first, second) {
+  return {
+    clientX: (first.clientX + second.clientX) / 2,
+    clientY: (first.clientY + second.clientY) / 2,
   };
 }
 
 async function exportAvatarCrop() {
-  const { image, fileName, zoom, offsetX, offsetY } = state.avatarCrop;
-  if (!image) {
+  if (!state.avatarCrop.image) {
     throw new Error('请先选择头像图片');
   }
 
+  const rect = avatarCropStage.getBoundingClientRect();
   const outputSize = 512;
+  const ratio = outputSize / rect.width;
+  const totalScale = state.avatarCrop.baseScale * state.avatarCrop.zoom * ratio;
   const canvas = document.createElement('canvas');
   canvas.width = outputSize;
   canvas.height = outputSize;
-  const ctx = canvas.getContext('2d');
-  const transform = calculateAvatarTransform({
-    imageWidth: image.width,
-    imageHeight: image.height,
-    cropSize: outputSize,
-    zoom,
-    offsetXPercent: offsetX,
-    offsetYPercent: offsetY,
-  });
+  const context = canvas.getContext('2d');
 
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, outputSize, outputSize);
-  ctx.drawImage(image, transform.drawX, transform.drawY, transform.drawWidth, transform.drawHeight);
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, outputSize, outputSize);
+  context.drawImage(
+    state.avatarCrop.image,
+    outputSize / 2 + state.avatarCrop.offsetX * ratio - (state.avatarCrop.image.width * totalScale) / 2,
+    outputSize / 2 + state.avatarCrop.offsetY * ratio - (state.avatarCrop.image.height * totalScale) / 2,
+    state.avatarCrop.image.width * totalScale,
+    state.avatarCrop.image.height * totalScale,
+  );
 
   const blob = await new Promise((resolve) => {
     canvas.toBlob(resolve, 'image/png', 0.92);
@@ -869,7 +1112,7 @@ async function exportAvatarCrop() {
     throw new Error('头像裁剪失败，请重试');
   }
 
-  return new File([blob], normalizeAvatarFileName(fileName), { type: 'image/png' });
+  return new File([blob], normalizeAvatarFileName(state.avatarCrop.fileName), { type: 'image/png' });
 }
 
 function normalizeAvatarFileName(fileName) {
@@ -877,11 +1120,130 @@ function normalizeAvatarFileName(fileName) {
   return `${base || 'avatar'}-avatar.png`;
 }
 
-function loadImage(objectUrl) {
+function mergeConversation(conversation) {
+  const index = state.conversations.findIndex((item) => item.id === conversation.id);
+  if (index === -1) {
+    state.conversations.unshift(conversation);
+  } else {
+    state.conversations[index] = conversation;
+  }
+
+  state.conversations.sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
+
+  if (state.activeConversation?.id === conversation.id) {
+    state.activeConversation = state.conversations.find((item) => item.id === conversation.id) ?? conversation;
+  }
+}
+
+function upsertMessage(message) {
+  if (!message || !state.activeConversation || message.conversationId !== state.activeConversation.id) {
+    return;
+  }
+
+  const index = state.messages.findIndex((item) => item.id === message.id);
+  if (index === -1) {
+    state.messages.push(message);
+  } else {
+    state.messages[index] = message;
+  }
+
+  state.messages.sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+}
+
+function setConversationUnreadCount(conversationId, unreadCount) {
+  const conversation = state.conversations.find((item) => item.id === conversationId);
+  if (conversation) {
+    conversation.unreadCount = unreadCount;
+  }
+  if (state.activeConversation?.id === conversationId) {
+    state.activeConversation.unreadCount = unreadCount;
+  }
+}
+
+function getConversationPreview(conversation) {
+  const latest = conversation.latestMessage;
+  if (!latest) {
+    return '暂无消息';
+  }
+  if (latest.type === 'image') {
+    return `[图片] ${latest.imageName || '图片'}`;
+  }
+  return latest.text || '暂无消息';
+}
+
+function getConversationMeta(conversation) {
+  if (conversation.type === 'direct') {
+    const peer = conversation.members.find((member) => member.id !== state.session.user.id);
+    return peer ? `与 ${peer.nickname} 的私聊` : '私聊';
+  }
+  return `${conversation.members.length} 人群聊`;
+}
+
+function getReceiptText(message, conversationType) {
+  if (conversationType === 'group') {
+    return message.readByCount > 0 ? `已读 ${message.readByCount}` : '未读';
+  }
+  return message.readByCount > 0 ? '已读' : '未读';
+}
+
+function renderAvatar(user, size = '') {
+  const classes = ['avatar'];
+  if (size) {
+    classes.push(size);
+  }
+
+  const initials = getInitials(user?.nickname || user?.account || '?');
+  const content = user?.avatarUrl
+    ? `<img src="${escapeAttribute(user.avatarUrl)}" alt="${escapeAttribute(user.nickname || 'avatar')}" />`
+    : escapeHtml(initials);
+
+  return `<div class="${classes.join(' ')}">${content}</div>`;
+}
+
+function getInitials(value) {
+  const text = String(value || '?').trim();
+  if (!text) {
+    return '?';
+  }
+
+  const chars = [...text];
+  if (chars.length === 1) {
+    return chars[0].toUpperCase();
+  }
+  return `${chars[0]}${chars[1]}`.toUpperCase();
+}
+
+function formatConversationTime(value) {
+  if (!value) {
+    return '';
+  }
+
+  const date = new Date(value);
+  const now = new Date();
+  const sameDay = date.toDateString() === now.toDateString();
+  return sameDay
+    ? new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(date)
+    : new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric' }).format(date);
+}
+
+function formatDateTime(value) {
+  if (!value) {
+    return '';
+  }
+
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value));
+}
+
+async function loadImage(objectUrl) {
   return new Promise((resolve, reject) => {
     const image = new Image();
     image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error('图片加载失败，请换一张图片试试'));
+    image.onerror = () => reject(new Error('图片加载失败，请换一张图片重试'));
     image.src = objectUrl;
   });
 }
@@ -924,108 +1286,68 @@ function didMessagePersist({ type, text = '', imageName = '', submittedAt = 0 })
 }
 
 async function api(path, options = {}) {
+  const headers = {};
+  if (!options.skipAuth && state.session?.sessionToken) {
+    headers.Authorization = `Bearer ${state.session.sessionToken}`;
+  }
+  if (options.body) {
+    headers['Content-Type'] = 'application/json';
+  }
+
   const response = await fetch(path, {
     method: options.method || 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.skipAuth || !state.session?.sessionToken
-        ? {}
-        : { Authorization: `Bearer ${state.session.sessionToken}` }),
-    },
+    headers,
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
+
   return readJson(response);
 }
 
 async function readJson(response) {
-  const data = await response.json().catch(() => ({}));
+  const raw = await response.text();
+  const data = raw ? JSON.parse(raw) : null;
+
   if (!response.ok) {
-    throw new Error(data.message || '请求失败');
+    const error = new Error(data?.message || '请求失败');
+    error.statusCode = response.status;
+    error.details = data?.details;
+    throw error;
   }
+
   return data;
-}
-
-function saveSession(session) {
-  if (session) {
-    localStorage.setItem('open-chat-circle-session', JSON.stringify(session));
-  } else {
-    localStorage.removeItem('open-chat-circle-session');
-  }
-}
-
-function loadSession() {
-  const raw = localStorage.getItem('open-chat-circle-session');
-  return raw ? JSON.parse(raw) : null;
-}
-
-function showToast(message) {
-  toast.textContent = message;
-  toast.classList.remove('hidden');
-  window.clearTimeout(showToast.timer);
-  showToast.timer = window.setTimeout(() => {
-    toast.classList.add('hidden');
-  }, 2500);
 }
 
 function handleError(error) {
   console.error(error);
-  showToast(error.message || String(error));
+  showToast(error.message || '操作失败，请重试');
 }
 
-function getConversationPreview(conversation) {
-  if (!conversation.latestMessage) {
-    return '还没有消息';
-  }
+let toastTimer = null;
 
-  if (conversation.latestMessage.type === 'image') {
-    return `[图片] ${conversation.latestMessage.imageName || '图片'}`;
-  }
-
-  return conversation.latestMessage.text || '还没有消息';
+function showToast(message) {
+  toast.textContent = message;
+  toast.classList.remove('hidden');
+  window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => {
+    toast.classList.add('hidden');
+  }, 2600);
 }
 
-function getConversationMeta(conversation) {
-  if (conversation.type === 'direct') {
-    const peer = conversation.members.find((member) => member.id !== state.session.user.id);
-    return peer ? `私聊 · @${peer.account}` : '私聊';
-  }
-
-  return `群聊 · ${conversation.members.length} 人`;
-}
-
-function getReceiptText(message, conversationType) {
-  const count = Number(message.readByCount || 0);
-  if (conversationType === 'group') {
-    return count > 0 ? `${count} 人已读` : '未读';
-  }
-  return count > 0 ? '已读' : '未读';
-}
-
-function formatConversationTime(value) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return '';
-  }
-
-  return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-}
-
-function renderAvatar(entity, sizeClass = '') {
-  const label = getAvatarLabel(entity?.nickname || entity?.account || '?');
-  const classes = ['avatar', sizeClass].filter(Boolean).join(' ');
-  if (entity?.avatarUrl) {
-    return `<div class="${classes}"><img src="${escapeAttribute(entity.avatarUrl)}" alt="${escapeAttribute(entity.nickname || 'avatar')}" /></div>`;
-  }
-  return `<div class="${classes}"><span>${escapeHtml(label)}</span></div>`;
-}
-
-function getAvatarLabel(value) {
-  const text = String(value || '?').trim();
-  return text.slice(0, 1).toUpperCase();
+function resetToLoggedOut() {
+  disconnectRealtime();
+  closeAvatarCropper();
+  state.session = null;
+  state.contacts = [];
+  state.invites = [];
+  state.conversations = [];
+  state.messages = [];
+  state.activeConversation = null;
+  saveSession(null);
+  render();
 }
 
 function escapeHtml(value) {
-  return String(value)
+  return String(value ?? '')
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
@@ -1037,7 +1359,6 @@ function escapeAttribute(value) {
   return escapeHtml(value);
 }
 
-function formatDateTime(value) {
-  const date = new Date(value);
-  return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
 }

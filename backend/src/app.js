@@ -18,37 +18,96 @@ import { registerStorageRoutes } from './modules/storage/routes.js';
 
 class RealtimeHub {
   constructor() {
-    this.userSockets = new Map();
+    this.userConnections = new Map();
+  }
+
+  addClient(userId, client) {
+    const set = this.userConnections.get(userId) ?? new Set();
+    set.add(client);
+    this.userConnections.set(userId, set);
+
+    return () => {
+      set.delete(client);
+      if (set.size === 0) {
+        this.userConnections.delete(userId);
+      }
+    };
   }
 
   addSocket(userId, socket) {
-    const set = this.userSockets.get(userId) ?? new Set();
-    set.add(socket);
-    this.userSockets.set(userId, set);
+    const client = {
+      send(event) {
+        if (socket.readyState !== 1) {
+          throw new Error('Socket is not open.');
+        }
+        socket.send(JSON.stringify(event));
+      },
+      close() {
+        socket.close();
+      },
+    };
+    const cleanup = this.addClient(userId, client);
 
-    socket.on('close', () => {
-      set.delete(socket);
-      if (set.size === 0) {
-        this.userSockets.delete(userId);
-      }
+    socket.on('close', cleanup);
+    socket.on('error', cleanup);
+  }
+
+  addEventStream(userId, raw) {
+    raw.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
     });
+
+    const client = {
+      send(event) {
+        raw.write(`data: ${JSON.stringify(event)}\n\n`);
+      },
+      close() {
+        raw.end();
+      },
+    };
+    const cleanup = this.addClient(userId, client);
+    const heartbeat = setInterval(() => {
+      try {
+        raw.write('event: ping\ndata: {}\n\n');
+      } catch {
+        cleanup();
+      }
+    }, 20000);
+
+    raw.write(`event: ready\ndata: ${JSON.stringify({ userId })}\n\n`);
+
+    const teardown = () => {
+      clearInterval(heartbeat);
+      cleanup();
+    };
+
+    raw.on('close', teardown);
+    raw.on('error', teardown);
   }
 
   broadcastUsers(userIds, event) {
     for (const userId of userIds) {
-      const sockets = this.userSockets.get(userId);
-      if (!sockets) {
+      const clients = this.userConnections.get(userId);
+      if (!clients) {
         continue;
       }
-      for (const socket of sockets) {
-        if (socket.readyState === 1) {
+      for (const client of clients) {
+        try {
+          client.send(event);
+        } catch {
           try {
-            socket.send(JSON.stringify(event));
+            client.close();
           } catch {
-            socket.close();
-            sockets.delete(socket);
+            // Ignore cleanup failures from stale transports.
           }
+          clients.delete(client);
         }
+      }
+      if (clients.size === 0) {
+        this.userConnections.delete(userId);
       }
     }
   }
@@ -122,6 +181,12 @@ export async function buildApp() {
     storeDriver: config.storeDriver,
     now: new Date().toISOString(),
   }));
+
+  app.get('/api/events', async (request, reply) => {
+    const user = await resolveRequestUser(request, app);
+    reply.hijack();
+    realtimeHub.addEventStream(user.id, reply.raw);
+  });
 
   app.get('/ws', { websocket: true }, async (connection, request) => {
     const user = await resolveRequestUser(request, app);

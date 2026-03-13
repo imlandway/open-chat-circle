@@ -174,6 +174,7 @@ export class ChatService {
     }
 
     const messages = await this.store.read(MESSAGES);
+    const users = await this.store.read(USERS);
     const message = {
       id: `msg_${randomUUID()}`,
       conversationId,
@@ -193,10 +194,65 @@ export class ChatService {
     await this.store.write(CONVERSATIONS, conversations);
 
     await this.markRead(userId, conversationId, message.id);
-    const serializedMessage = (await this.listMessages(userId, conversationId, { limit: 1 })).at(-1);
+    const readStates = await this.store.read(READ_STATES);
+
+    let serializedMessage;
+    try {
+      const threadMessages = sortByCreatedAt(
+        messages.filter((item) => item.conversationId === conversationId),
+      );
+      const messageIndexById = new Map(threadMessages.map((item, index) => [item.id, index]));
+      const readIndexByUserId = new Map((mutableConversation?.memberIds ?? []).map((memberId) => {
+        const state = readStates.find(
+          (item) => item.conversationId === conversationId && item.userId === memberId,
+        );
+        return [
+          memberId,
+          state?.lastReadMessageId && messageIndexById.has(state.lastReadMessageId)
+            ? messageIndexById.get(state.lastReadMessageId)
+            : -1,
+        ];
+      }));
+
+      serializedMessage = this.serializeMessage(
+        message,
+        users,
+        mutableConversation ?? conversation,
+        messageIndexById,
+        readIndexByUserId,
+      );
+    } catch {
+      const sender = users.find((item) => item.id === userId) ?? null;
+      serializedMessage = {
+        ...message,
+        sender: sender
+          ? {
+              id: sender.id,
+              nickname: sender.nickname,
+              avatarUrl: sender.avatarUrl,
+              account: sender.account,
+            }
+          : null,
+        readByUserIds: [],
+        readByCount: 0,
+      };
+    }
+
+    let summary;
+    try {
+      summary = await this.getConversationSummary(conversationId, userId);
+    } catch {
+      summary = this.serializeConversation(
+        mutableConversation ?? conversation,
+        users,
+        userId,
+        serializedMessage,
+        0,
+      );
+    }
 
     return {
-      conversation: await this.getConversationSummary(conversationId, userId),
+      conversation: summary,
       message: serializedMessage ?? message,
     };
   }
