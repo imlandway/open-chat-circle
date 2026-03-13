@@ -638,6 +638,19 @@ function getTopbarTitle() {
   return '会话';
 }
 
+function getMineSectionLabel(section) {
+  if (section === 'profile') {
+    return '资料设置';
+  }
+  if (section === 'password') {
+    return '密码设置';
+  }
+  if (section === 'avatar') {
+    return '头像设置';
+  }
+  return '我的';
+}
+
 function renderAuthPanel() {
   const remembered = loadRememberedCredentials();
   authPanel.innerHTML = `
@@ -759,9 +772,17 @@ function renderUserSummary() {
       </div>
 
       <div class="mine-tabs">
-        <button class="mine-tab ${state.mineSection === 'profile' ? 'active' : ''}" type="button" data-mine-section="profile">资料设置</button>
-        <button class="mine-tab ${state.mineSection === 'password' ? 'active' : ''}" type="button" data-mine-section="password">密码设置</button>
-        <button class="mine-tab ${state.mineSection === 'avatar' ? 'active' : ''}" type="button" data-mine-section="avatar">头像设置</button>
+        ${
+          state.mineSection
+            ? `
+              <button class="mine-tab active" type="button" data-mine-section="${escapeAttribute(state.mineSection)}">${escapeHtml(getMineSectionLabel(state.mineSection))}</button>
+            `
+            : `
+              <button class="mine-tab" type="button" data-mine-section="profile">资料设置</button>
+              <button class="mine-tab" type="button" data-mine-section="password">密码设置</button>
+              <button class="mine-tab" type="button" data-mine-section="avatar">头像设置</button>
+            `
+        }
       </div>
 
       ${
