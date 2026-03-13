@@ -108,3 +108,9 @@ flutter run --dart-define=API_BASE_URL=http://localhost:8787
 If Sealos asks for an image name, use:
 
 `ghcr.io/imlandway/open-chat-circle-backend:latest`
+
+## Aliyun single-server deploy
+
+For a simple Aliyun ECS or Light Server deployment, use:
+
+`deploy/docker-compose.aliyun.yml`
