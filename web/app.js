@@ -307,6 +307,8 @@ function createEmptyAvatarCropState() {
     mode: 'user',
     title: '裁剪头像',
     saveLabel: '保存头像',
+    viewportInset: 28,
+    viewportRadius: 999,
     fileName: '',
     objectUrl: '',
     image: null,
@@ -2167,17 +2169,22 @@ async function submitImageMessage() {
 async function openAvatarCropper(file, options = {}) {
   const objectUrl = URL.createObjectURL(file);
   const image = await loadImage(objectUrl);
+  const isGroupCrop = options.mode === 'group';
 
   state.avatarCrop = createEmptyAvatarCropState();
   state.avatarCrop.mode = options.mode || 'user';
   state.avatarCrop.title = options.title || '裁剪头像';
   state.avatarCrop.saveLabel = options.saveLabel || '保存头像';
+  state.avatarCrop.viewportInset = isGroupCrop ? 24 : 28;
+  state.avatarCrop.viewportRadius = isGroupCrop ? 18 : 999;
   state.avatarCrop.fileName = file.name || 'avatar.png';
   state.avatarCrop.objectUrl = objectUrl;
   state.avatarCrop.image = image;
 
   avatarDialogTitle.textContent = state.avatarCrop.title;
   saveAvatarBtn.textContent = state.avatarCrop.saveLabel;
+  avatarCropStage.style.setProperty('--crop-inset', `${state.avatarCrop.viewportInset}px`);
+  avatarCropStage.style.setProperty('--crop-radius', `${state.avatarCrop.viewportRadius}px`);
   avatarCropImage.src = objectUrl;
   avatarDialog.showModal();
 
@@ -2306,6 +2313,8 @@ function resetAvatarCropper() {
 
   avatarCropImage.removeAttribute('src');
   avatarCropImage.style.transform = '';
+  avatarCropStage.style.removeProperty('--crop-inset');
+  avatarCropStage.style.removeProperty('--crop-radius');
   avatarCropStage.classList.remove('dragging');
   state.avatarCrop = createEmptyAvatarCropState();
   avatarDialogTitle.textContent = state.avatarCrop.title;
@@ -2518,7 +2527,8 @@ async function exportAvatarCrop() {
 
   const rect = avatarCropStage.getBoundingClientRect();
   const outputSize = 512;
-  const ratio = outputSize / rect.width;
+  const cropSize = rect.width - state.avatarCrop.viewportInset * 2;
+  const ratio = outputSize / cropSize;
   const totalScale = state.avatarCrop.baseScale * state.avatarCrop.zoom * ratio;
   const canvas = document.createElement('canvas');
   canvas.width = outputSize;

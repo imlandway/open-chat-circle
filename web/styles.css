@@ -759,6 +759,8 @@ dialog::backdrop {
 }
 
 .avatar-crop-stage {
+  --crop-inset: 28px;
+  --crop-radius: 999px;
   position: relative;
   width: min(400px, calc(100vw - 120px));
   height: min(400px, calc(100vw - 120px));
@@ -794,22 +796,22 @@ dialog::backdrop {
 }
 
 .avatar-crop-mask {
-  background: rgba(0, 0, 0, 0.18);
-  mask:
-    linear-gradient(#fff 0 0) top left / 100% 100% no-repeat,
-    radial-gradient(circle, #000 0 59%, transparent 60%) center / calc(100% - 56px) calc(100% - 56px) no-repeat;
-  mask-composite: exclude;
-  -webkit-mask:
-    linear-gradient(#fff 0 0) top left / 100% 100% no-repeat,
-    radial-gradient(circle, #000 0 59%, transparent 60%) center / calc(100% - 56px) calc(100% - 56px) no-repeat;
-  -webkit-mask-composite: xor;
+  background: transparent;
+}
+
+.avatar-crop-mask::before {
+  content: "";
+  position: absolute;
+  inset: var(--crop-inset);
+  border-radius: var(--crop-radius);
+  box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.18);
 }
 
 .avatar-crop-frame::before {
   content: "";
   position: absolute;
-  inset: 28px;
-  border-radius: 999px;
+  inset: var(--crop-inset);
+  border-radius: var(--crop-radius);
   border: 2px solid #ffffff;
 }
 
