@@ -543,6 +543,122 @@ test('assistant runs stay serialized per conversation', async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
+test('assistant prompt prefers direct execution and final replies are normalized', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
+  const store = new JsonStore(dataDir);
+  const sessionService = new SessionService('test-secret');
+  const authService = new AuthService(store, sessionService);
+  const chatService = new ChatService(store);
+  let firstPayload = null;
+
+  const aiService = new AiService({
+    store,
+    authService,
+    chatService,
+    realtimeHub: {
+      broadcastUsers() {},
+    },
+    config: {
+      openaiApiKey: 'test-key',
+      openaiModel: 'gpt-test',
+      aiAssistantAccount: 'codex',
+      aiAssistantNickname: 'AI 助手',
+      aiAgentToken: 'agent-token',
+    },
+    openaiClient: {
+      async createResponse(payload) {
+        firstPayload = payload;
+        return {
+          id: 'resp_direct',
+          output_text: 'done\n\n\nnext',
+          output: [
+            {
+              type: 'message',
+              content: [
+                {
+                  type: 'output_text',
+                  text: 'done\n\n\nnext',
+                },
+              ],
+            },
+          ],
+        };
+      },
+    },
+  });
+
+  await authService.ensureSeedAdmin();
+  const admin = await authService.getUserById('user_admin');
+  const conversation = await aiService.ensureAssistantConversation(admin);
+  const sent = await chatService.sendMessage(admin.id, conversation.id, {
+    type: 'text',
+    text: 'say hi',
+  });
+  await aiService.enqueueConversationRun({
+    actorUserId: admin.id,
+    conversationId: conversation.id,
+    triggerMessageId: sent.message.id,
+  });
+  await aiService.waitForConversationIdle(conversation.id);
+
+  const systemPrompt = firstPayload.input[0].content[0].text;
+  assert.match(systemPrompt, /Default to action, not discussion/);
+  assert.match(systemPrompt, /Do not write filler/);
+
+  const messages = await chatService.listMessages(admin.id, conversation.id);
+  assert.equal(messages.at(-1).text, 'done\n\nnext');
+
+  await rm(dataDir, { recursive: true, force: true });
+});
+
+test('assistant provider failures become short user-facing errors', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
+  const store = new JsonStore(dataDir);
+  const sessionService = new SessionService('test-secret');
+  const authService = new AuthService(store, sessionService);
+  const chatService = new ChatService(store);
+
+  const aiService = new AiService({
+    store,
+    authService,
+    chatService,
+    realtimeHub: {
+      broadcastUsers() {},
+    },
+    config: {
+      openaiApiKey: 'test-key',
+      openaiModel: 'gpt-test',
+      aiAssistantAccount: 'codex',
+      aiAssistantNickname: 'AI 助手',
+      aiAgentToken: 'agent-token',
+    },
+    openaiClient: {
+      async createResponse() {
+        throw new Error('Request timed out while waiting for provider');
+      },
+    },
+  });
+
+  await authService.ensureSeedAdmin();
+  const admin = await authService.getUserById('user_admin');
+  const conversation = await aiService.ensureAssistantConversation(admin);
+  const sent = await chatService.sendMessage(admin.id, conversation.id, {
+    type: 'text',
+    text: 'run it',
+  });
+  await aiService.enqueueConversationRun({
+    actorUserId: admin.id,
+    conversationId: conversation.id,
+    triggerMessageId: sent.message.id,
+  });
+  await aiService.waitForConversationIdle(conversation.id);
+
+  const messages = await chatService.listMessages(admin.id, conversation.id);
+  assert.equal(messages.at(-1).text, '执行失败：执行超时。');
+
+  await rm(dataDir, { recursive: true, force: true });
+});
+
 test('assistant treats read-only shell inspection commands as approval-free', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
   const store = new JsonStore(dataDir);

@@ -171,14 +171,48 @@ function buildSystemPrompt() {
   return [
     'You are Codex inside Open Chat Circle.',
     'You are helping the admin operate their own Windows computer through a trusted local agent.',
+    'Default to action, not discussion.',
     'Use tools whenever the user asks you to inspect files, run commands, edit code, or control the browser.',
     'Prefer fs_list, fs_read, and fs_search for file inspection tasks.',
-    'Only use shell_run when the user explicitly wants to run a shell command or when the fs_* tools cannot complete the task.',
+    'Only use shell_run when the user explicitly wants a shell command or when the fs_* tools cannot complete the task.',
+    'Do not ask for clarification when the next tool step is obvious.',
     'Do not claim actions completed unless a tool result confirms it.',
-    'Be concise, collaborative, and practical.',
-    'When a tool fails, explain what failed and what the user can do next.',
-    'If you receive a screenshot tool result, summarize what is visible before continuing.',
+    'Keep replies short, direct, and practical.',
+    'Do not write filler, reassurance, repeated explanations, or long diagnostic lists.',
+    'When a tool fails or times out, reply in at most two short sentences: what failed, then the next step.',
+    'If the user only says hello, reply briefly and invite one concrete task.',
+    'If you receive a screenshot tool result, summarize only the useful visible details before continuing.',
   ].join(' ');
+}
+
+function normalizeAssistantText(text) {
+  const normalized = String(text || '')
+    .replace(/\r/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  return normalized || '\u5df2\u5904\u7406\u5b8c\u6210\u3002';
+}
+
+function toUserFacingErrorMessage(error) {
+  const rawMessage = String(error?.message || '').trim();
+  if (!rawMessage) {
+    return '\u672a\u77e5\u9519\u8bef';
+  }
+
+  if (/timeout|timed out/i.test(rawMessage)) {
+    return '\u6267\u884c\u8d85\u65f6';
+  }
+
+  if (/api key/i.test(rawMessage)) {
+    return 'AI API key \u65e0\u6548\u6216\u4e0d\u53ef\u7528';
+  }
+
+  if (/insufficient|quota|billing|balance|credit/i.test(rawMessage)) {
+    return '\u6a21\u578b\u8d26\u6237\u989d\u5ea6\u4e0d\u8db3';
+  }
+
+  return rawMessage;
 }
 
 function shouldRequireToolApproval(toolName, argumentsPayload) {
@@ -426,6 +460,7 @@ function createChatCompletionsClient(config, transport = null) {
         model: config.aiModel || 'deepseek-chat',
         messages: chatMessages,
         tools: toToolCallDefinitionsForChatCompletions(tools),
+        temperature: 0.2,
       });
 
       return {
@@ -455,6 +490,7 @@ function createChatCompletionsClient(config, transport = null) {
         model: config.aiModel || 'deepseek-chat',
         messages: nextMessages,
         tools: toToolCallDefinitionsForChatCompletions(tools),
+        temperature: 0.2,
       });
 
       return {
@@ -642,7 +678,7 @@ export class AiService {
       if (!this.config.aiApiKey && !this.config.openaiApiKey) {
         const message = await this.postAssistantText(
           run.conversationId,
-          'AI API key 尚未配置，当前还不能执行 AI/本地 agent 指令。',
+          'AI API key 未配置，当前无法执行 AI 指令。',
         );
         await this.finishRun(runId, {
           status: 'completed',
@@ -664,7 +700,7 @@ export class AiService {
       for (let step = 0; step < 6; step += 1) {
         const toolCalls = this.aiClient.getToolCalls(response);
         if (toolCalls.length === 0) {
-          const finalText = this.aiClient.getText(response) || '我已经处理完了。';
+          const finalText = normalizeAssistantText(this.aiClient.getText(response));
 
           for (const image of pendingImages) {
             const sentImage = await this.postAssistantImage(run.conversationId, image);
@@ -697,7 +733,7 @@ export class AiService {
 
       const timeoutMessage = await this.postAssistantText(
         run.conversationId,
-        '这次指令链路太长了，我先停在这里。你可以换个更具体的步骤继续让我执行。',
+        '这次执行超时了。请把指令拆成更具体的一步再试。',
       );
       await this.finishRun(runId, {
         status: 'completed',
@@ -706,7 +742,7 @@ export class AiService {
     } catch (error) {
       const fallbackMessage = await this.postAssistantText(
         run.conversationId,
-        `这次执行失败了：${error.message || '未知错误'}`,
+        `执行失败：${toUserFacingErrorMessage(error)}。`,
       );
       await this.finishRun(runId, {
         status: 'failed',
@@ -799,7 +835,7 @@ export class AiService {
       const offlineResult = normalizeToolResult({
         type: 'text',
         text: '',
-        error: '本地 agent 未连接，暂时无法操作这台电脑。',
+        error: '本地 agent 未连接，当前无法操作这台电脑。',
         metadata: {
           offline: true,
         },
@@ -820,7 +856,7 @@ export class AiService {
         this.jobWaiters.delete(job.id);
         const timeoutResult = normalizeToolResult({
           type: 'text',
-          error: '本地 agent 执行超时，请稍后再试。',
+          error: '本地 agent 执行超时。请重试。',
           metadata: {
             timeout: true,
           },
