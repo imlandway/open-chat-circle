@@ -216,7 +216,7 @@ test('users can add friends, reply, recall messages, and manage group members', 
   const admin = await authService.getUserById('user_admin');
   await assert.rejects(
     () => chatService.addGroupMembers(alice.user.id, group.id, [admin.id]),
-    /Only friends can be added to this group/,
+    /Only friends or assistant accounts can be added to this group/,
   );
   await socialService.addFriend(alice.user.id, { userId: admin.id });
   const expanded = await chatService.addGroupMembers(alice.user.id, group.id, [admin.id]);
@@ -600,6 +600,88 @@ test('assistant treats read-only shell inspection commands as approval-free', as
   );
 
   assert.equal(capturedJob.requiresApproval, true);
+
+  await rm(dataDir, { recursive: true, force: true });
+});
+
+test('assistant account can be added to groups without friendship and group context includes speaker names', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
+  const store = new JsonStore(dataDir);
+  const sessionService = new SessionService('test-secret');
+  const authService = new AuthService(store, sessionService);
+  const socialService = new SocialService(store);
+  const chatService = new ChatService(store);
+  const aiService = new AiService({
+    store,
+    authService,
+    chatService,
+    realtimeHub: {
+      broadcastUsers() {},
+    },
+    config: {
+      openaiApiKey: 'test-key',
+      openaiModel: 'gpt-test',
+      aiAssistantAccount: 'codex',
+      aiAssistantNickname: 'AI 助手',
+      aiAgentToken: 'agent-token',
+    },
+  });
+
+  await authService.ensureSeedAdmin();
+  await store.write('invites', [
+    {
+      id: 'invite_test',
+      code: 'TEST-OPEN',
+      createdBy: 'user_admin',
+      maxUses: 10,
+      usedCount: 0,
+      expiresAt: '2027-01-01T00:00:00.000Z',
+      status: 'active',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    },
+  ]);
+
+  const admin = await authService.getUserById('user_admin');
+  const bob = await authService.registerWithInvite({
+    inviteCode: 'TEST-OPEN',
+    nickname: 'Bob',
+    password: 'password123',
+  });
+  const carol = await authService.registerWithInvite({
+    inviteCode: 'TEST-OPEN',
+    nickname: 'Carol',
+    password: 'password123',
+  });
+  const assistant = await authService.ensureAssistantUser({
+    account: 'codex',
+    nickname: 'AI 助手',
+  });
+
+  await socialService.addFriend(admin.id, { userId: bob.user.id });
+  await socialService.addFriend(admin.id, { userId: carol.user.id });
+
+  const group = await chatService.createGroupConversation(admin.id, {
+    name: 'AI Group',
+    memberIds: [bob.user.id, carol.user.id],
+  });
+
+  const expanded = await chatService.addGroupMembers(admin.id, group.id, [assistant.id]);
+  assert.equal(expanded.members.some((member) => member.id === assistant.id), true);
+  assert.equal(await aiService.isAssistantConversationId(group.id), true);
+
+  const sent = await chatService.sendMessage(bob.user.id, group.id, {
+    type: 'text',
+    text: 'hello assistant',
+  });
+
+  const context = await aiService.buildRunContext({
+    requestedBy: admin.id,
+    conversationId: group.id,
+    triggerMessageId: sent.message.id,
+  });
+
+  assert.equal(context.at(-1).role, 'user');
+  assert.match(context.at(-1).text, /^Bob: hello assistant$/);
 
   await rm(dataDir, { recursive: true, force: true });
 });

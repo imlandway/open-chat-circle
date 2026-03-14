@@ -862,7 +862,7 @@ function renderGroupProfile() {
       chip.dataset.toggleGroupMemberId = contact.id;
       chip.innerHTML = `
         ${renderAvatar(contact, 'xs')}
-        <span>${escapeHtml(contact.nickname)}</span>
+        <span>${escapeHtml(contact.nickname)}${contact.isAssistant ? ' <span class="badge">AI</span>' : ''}</span>
       `;
       groupSelectedMemberList.appendChild(chip);
     }
@@ -880,7 +880,7 @@ function renderGroupProfile() {
       <div class="contact-main">
         ${renderAvatar(contact, 'small')}
         <div class="contact-text">
-          <div class="contact-title">${escapeHtml(contact.nickname)}</div>
+          <div class="contact-title">${escapeHtml(contact.nickname)}${contact.isAssistant ? ' <span class="badge">AI</span>' : ''}</div>
           <div class="meta">@${escapeHtml(contact.account)}</div>
         </div>
       </div>
@@ -1744,7 +1744,7 @@ function renderContacts() {
       <div class="contact-main">
         ${renderAvatar(contact)}
         <div class="contact-text">
-          <div class="contact-title">${escapeHtml(contact.nickname)}</div>
+          <div class="contact-title">${escapeHtml(contact.nickname)}${contact.isAssistant ? ' <span class="badge">AI</span>' : ''}</div>
           <div class="meta">@${escapeHtml(contact.account)}</div>
         </div>
       </div>
@@ -1985,7 +1985,7 @@ function renderGroupMembers() {
     label.innerHTML = `
       <input type="checkbox" value="${escapeAttribute(contact.id)}" />
       ${renderAvatar(contact, 'xs')}
-      <span>${escapeHtml(contact.nickname)} <span class="meta">@${escapeHtml(contact.account)}</span></span>
+      <span>${escapeHtml(contact.nickname)}${contact.isAssistant ? ' <span class="badge">AI</span>' : ''} <span class="meta">@${escapeHtml(contact.account)}</span></span>
     `;
     groupMemberList.appendChild(label);
   }

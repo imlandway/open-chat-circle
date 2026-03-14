@@ -185,10 +185,15 @@ export class ChatService {
     );
     assert(validUsers, 400, 'One or more group members are invalid.');
     const friendIds = getFriendIds(friendships, userId);
+    const assistantIds = new Set(
+      users
+        .filter((user) => user.status === 'active' && user.isAssistant)
+        .map((user) => user.id),
+    );
     assert(
-      candidateIds.every((memberId) => friendIds.has(memberId)),
+      candidateIds.every((memberId) => friendIds.has(memberId) || assistantIds.has(memberId)),
       403,
-      'Only friends can be added to this group.',
+      'Only friends or assistant accounts can be added to this group.',
     );
 
     const conversations = await this.store.read(CONVERSATIONS);

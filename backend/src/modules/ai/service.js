@@ -583,7 +583,6 @@ export class AiService {
     const conversations = await this.store.read(CONVERSATIONS);
     return conversations.some((conversation) => (
       conversation.id === conversationId
-      && conversation.type === 'direct'
       && Array.isArray(conversation.memberIds)
       && conversation.memberIds.includes(assistant.id)
     ));
@@ -719,6 +718,9 @@ export class AiService {
 
   async buildRunContext(run) {
     const assistant = await this.getAssistantUser();
+    const conversations = await this.store.read(CONVERSATIONS);
+    const conversation = conversations.find((item) => item.id === run.conversationId) ?? null;
+    const isGroupConversation = conversation?.type === 'group';
     const messages = await this.chatService.listMessages(run.requestedBy, run.conversationId, { limit: 40 });
     const triggerIndex = messages.findIndex((message) => message.id === run.triggerMessageId);
     const thread = triggerIndex >= 0 ? messages.slice(0, triggerIndex + 1) : messages;
@@ -728,6 +730,7 @@ export class AiService {
       .slice(-20)
       .map((message) => {
         const textParts = [];
+        const senderName = message.sender?.nickname || 'Unknown user';
 
         if (message.replyTo) {
           const replySender = message.replyTo.sender?.nickname || 'unknown';
@@ -743,9 +746,12 @@ export class AiService {
           textParts.push(message.text);
         }
 
+        const body = textParts.join('\n\n').trim() || '[Empty message]';
         return {
           role: message.senderId === assistant.id ? 'assistant' : 'user',
-          text: textParts.join('\n\n').trim() || '[Empty message]',
+          text: isGroupConversation && message.senderId !== assistant.id
+            ? `${senderName}: ${body}`
+            : body,
         };
       });
   }

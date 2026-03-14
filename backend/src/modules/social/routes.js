@@ -2,8 +2,24 @@ import { requireAdmin, requireAuth } from '../../core/http/auth.js';
 
 export async function registerSocialRoutes(fastify) {
   fastify.get('/api/contacts', { preHandler: requireAuth }, async (request) => {
+    const contacts = await fastify.socialService.listContacts(request.currentUser.id);
+
+    if (request.currentUser.isAdmin) {
+      const assistant = await fastify.aiService.getAssistantUser();
+      if (assistant.id !== request.currentUser.id && !contacts.some((contact) => contact.id === assistant.id)) {
+        contacts.unshift({
+          id: assistant.id,
+          account: assistant.account,
+          nickname: assistant.nickname,
+          avatarUrl: assistant.avatarUrl,
+          status: assistant.status,
+          isAssistant: true,
+        });
+      }
+    }
+
     return {
-      contacts: await fastify.socialService.listContacts(request.currentUser.id),
+      contacts,
     };
   });
 

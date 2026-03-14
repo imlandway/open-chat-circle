@@ -145,6 +145,7 @@ export async function registerChatRoutes(fastify) {
     if (
       request.currentUser.isAdmin
       && await fastify.aiService.isAssistantConversationId(request.params.conversationId)
+      && result.message.senderId !== (await fastify.aiService.getAssistantUser()).id
     ) {
       fastify.aiService.enqueueConversationRun({
         actorUserId: request.currentUser.id,
