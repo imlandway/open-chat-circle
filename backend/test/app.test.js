@@ -719,7 +719,7 @@ test('assistant can relay a task to local codex mode without calling provider AI
   assert.equal(capturedJob.argumentsPayload.cwd, 'C:\\Users\\asus\\Desktop\\聊天app');
 
   const messages = await chatService.listMessages(admin.id, conversation.id);
-  assert.equal(messages.at(-1).text, 'Codex relay result');
+  assert.equal(messages.at(-1).text, '[Codex relay]\nCodex relay result');
 
   await rm(dataDir, { recursive: true, force: true });
 });

@@ -768,9 +768,10 @@ export class AiService {
       responseMessageIds.push(sentImage.id);
     }
 
+    const relayLabel = '[Codex relay]';
     const finalText = relayResult.error
-      ? `\u6267\u884c\u5931\u8d25\uff1a${relayResult.error}\u3002`
-      : normalizeAssistantText(relayResult.text);
+      ? `${relayLabel}\n\u6267\u884c\u5931\u8d25\uff1a${relayResult.error}\u3002`
+      : `${relayLabel}\n${normalizeAssistantText(relayResult.text)}`;
     const finalMessage = await this.postAssistantText(run.conversationId, finalText);
     responseMessageIds.push(finalMessage.id);
 

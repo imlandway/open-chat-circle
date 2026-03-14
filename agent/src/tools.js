@@ -112,7 +112,7 @@ export function createToolRunner({ config, browser, uploadImage }) {
 
         return {
           type: 'text',
-          text: [stdout, stderr].filter(Boolean).join('\n').trim() || 'Codex relay 已处理完成。',
+          text: [stdout, stderr].filter(Boolean).join('\n').trim() || '[Codex relay]\n已处理完成。',
           metadata: {
             cwd,
             executable: config.codexExecutable,
