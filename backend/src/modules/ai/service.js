@@ -144,6 +144,8 @@ const TOOL_DEFINITIONS = [
   },
 ];
 
+const BROWSER_TOOL_DEFINITIONS = TOOL_DEFINITIONS.filter((tool) => tool.name.startsWith('browser_'));
+
 const SAFE_SHELL_INSPECTION_COMMANDS = [
   /^(get-childitem|gci|dir|ls)\b/i,
   /^(get-location|pwd)\b/i,
@@ -191,9 +193,11 @@ function buildLocalAgentPrompt(assistantName = 'Codex') {
 function buildCloudAssistantPrompt(assistantName = 'DeepSeek') {
   return [
     `You are ${assistantName} inside Open Chat Circle.`,
-    'You are a concise, helpful chat assistant for normal conversation and group discussion.',
-    'Do not claim you can control the user\'s Windows computer, local files, browser, or terminal.',
-    'Do not mention tools, agents, PowerShell, or local automation unless the user explicitly asks about product capabilities.',
+    'You are a concise, helpful chat assistant for normal conversation, group discussion, and website assistance.',
+    'You may use browser automation to open websites, click, type, log in, and capture screenshots when the user explicitly asks.',
+    'You may use credentials that the user directly provides in the current chat for website login tasks.',
+    'Do not claim you can control the user\'s local files, local terminal, or Windows desktop outside the browser session.',
+    'Do not mention PowerShell, local file access, or terminal access as capabilities.',
     'Reply naturally, directly, and briefly.',
     'If the user just greets you, greet them back in one short sentence.',
   ].join(' ');
@@ -776,7 +780,9 @@ export class AiService {
       const prompt = assistant?.kind === 'deepseek'
         ? buildCloudAssistantPrompt(assistant?.nickname || assistant?.user?.nickname || 'DeepSeek')
         : buildLocalAgentPrompt(assistant?.nickname || assistant?.user?.nickname || 'Codex');
-      const selectedTools = assistant?.kind === 'deepseek' ? [] : TOOL_DEFINITIONS;
+      const selectedTools = assistant?.kind === 'deepseek'
+        ? BROWSER_TOOL_DEFINITIONS
+        : TOOL_DEFINITIONS;
       let response = await this.aiClient.start({
         systemPrompt: prompt,
         messages: contextMessages,

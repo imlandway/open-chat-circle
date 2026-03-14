@@ -648,8 +648,13 @@ test('deepseek assistant uses chat prompt and final replies are normalized', asy
   await aiService.waitForConversationIdle(conversation.id);
 
   const systemPrompt = firstPayload.input[0].content[0].text;
-  assert.match(systemPrompt, /normal conversation and group discussion/);
-  assert.match(systemPrompt, /Do not claim you can control the user's Windows computer/);
+  assert.match(systemPrompt, /website assistance/);
+  assert.match(systemPrompt, /use browser automation to open websites, click, type, log in, and capture screenshots/);
+  assert.match(systemPrompt, /Do not claim you can control the user's local files, local terminal, or Windows desktop outside the browser session/);
+  assert.deepEqual(
+    firstPayload.tools.map((tool) => tool.name),
+    ['browser_navigate', 'browser_click', 'browser_type', 'browser_screenshot'],
+  );
 
   const messages = await chatService.listMessages(admin.id, conversation.id);
   assert.equal(messages.at(-1).text, 'done\n\nnext');
