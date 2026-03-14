@@ -152,6 +152,8 @@ const SAFE_SHELL_INSPECTION_COMMANDS = [
 ];
 
 const SHELL_RISKY_TOKENS = [';', '&&', '||', '|', '>', '<'];
+const DEFAULT_AGENT_JOB_TIMEOUT_MS = 120000;
+const CODEX_RELAY_JOB_TIMEOUT_MS = 1000 * 60 * 12;
 
 function parseToolArguments(rawArguments) {
   if (!rawArguments) {
@@ -1001,6 +1003,9 @@ export class AiService {
     await this.dispatchJob(job.id);
 
     return new Promise((resolve) => {
+      const waitTimeoutMs = toolName === 'codex_run'
+        ? CODEX_RELAY_JOB_TIMEOUT_MS
+        : DEFAULT_AGENT_JOB_TIMEOUT_MS;
       const timeout = setTimeout(async () => {
         this.jobWaiters.delete(job.id);
         const timeoutResult = normalizeToolResult({
@@ -1016,7 +1021,7 @@ export class AiService {
           error: timeoutResult.error,
         });
         resolve(timeoutResult);
-      }, 120000);
+      }, waitTimeoutMs);
 
       this.jobWaiters.set(job.id, {
         resolve: (payload) => {
