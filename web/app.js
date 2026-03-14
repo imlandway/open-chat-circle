@@ -2690,12 +2690,7 @@ function getReplyPreviewText(message) {
 
 function getConversationMeta(conversation) {
   if (conversation.isAssistant) {
-    if (conversation.assistantKind === 'codex') {
-      return conversation.agentOnline
-        ? 'Codex · 本地 agent 已连接'
-        : 'Codex · 本地 agent 未连接';
-    }
-    return 'DeepSeek · 云端 AI';
+    return '';
   }
   if (conversation.type === 'direct') {
     const peer = conversation.members.find((member) => member.id !== state.session.user.id);
