@@ -8,6 +8,10 @@ import { join } from 'node:path';
 const execFileAsync = promisify(execFile);
 const TEXT_FILE_BYTES_LIMIT = 200_000;
 
+function getNpxExecutable() {
+  return process.platform === 'win32' ? 'npx.cmd' : 'npx';
+}
+
 function buildCodexRelayPrompt({ instruction, history, cwd }) {
   const recentHistory = Array.isArray(history)
     ? history
@@ -43,6 +47,58 @@ function toCodexCliErrorMessage(error, executable) {
   }
 
   return message || 'Codex relay 执行失败。';
+}
+
+async function runCodexExec({ executable, model, prompt, cwd }) {
+  return execFileAsync(
+    executable,
+    ['exec', '--ask-for-approval', 'never', '--model', model, prompt],
+    {
+      cwd,
+      timeout: 1000 * 60 * 10,
+      maxBuffer: 1024 * 1024 * 16,
+      windowsHide: false,
+    },
+  );
+}
+
+async function runCodexViaNpx({ model, prompt, cwd }) {
+  return execFileAsync(
+    getNpxExecutable(),
+    ['--yes', '@openai/codex', 'exec', '--ask-for-approval', 'never', '--model', model, prompt],
+    {
+      cwd,
+      timeout: 1000 * 60 * 10,
+      maxBuffer: 1024 * 1024 * 16,
+      windowsHide: false,
+    },
+  );
+}
+
+async function runCodexWithFallback({ executable, model, prompt, cwd }) {
+  try {
+    const result = await runCodexExec({ executable, model, prompt, cwd });
+    return {
+      ...result,
+      resolvedExecutable: executable,
+    };
+  } catch (error) {
+    const message = String(error?.message || '').trim();
+    const shouldFallbackToNpx = (
+      executable === 'codex'
+      && (error?.code === 'ENOENT' || error?.code === 'EACCES' || /not recognized|cannot find|access is denied/i.test(message))
+    );
+
+    if (!shouldFallbackToNpx) {
+      throw error;
+    }
+
+    const result = await runCodexViaNpx({ model, prompt, cwd });
+    return {
+      ...result,
+      resolvedExecutable: `${getNpxExecutable()} @openai/codex`,
+    };
+  }
 }
 
 function ensureInsideAllowedRoots(targetPath, allowedRoots) {
@@ -99,23 +155,19 @@ export function createToolRunner({ config, browser, uploadImage }) {
       });
 
       try {
-        const { stdout, stderr } = await execFileAsync(
-          config.codexExecutable,
-          ['exec', '--ask-for-approval', 'never', '--model', config.codexModel, prompt],
-          {
-            cwd,
-            timeout: 1000 * 60 * 10,
-            maxBuffer: 1024 * 1024 * 16,
-            windowsHide: false,
-          },
-        );
+        const { stdout, stderr, resolvedExecutable } = await runCodexWithFallback({
+          executable: config.codexExecutable,
+          model: config.codexModel,
+          prompt,
+          cwd,
+        });
 
         return {
           type: 'text',
           text: [stdout, stderr].filter(Boolean).join('\n').trim() || '[Codex relay]\n已处理完成。',
           metadata: {
             cwd,
-            executable: config.codexExecutable,
+            executable: resolvedExecutable,
             model: config.codexModel,
           },
         };
