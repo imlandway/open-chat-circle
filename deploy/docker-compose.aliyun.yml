@@ -29,6 +29,11 @@ services:
       STORE_DRIVER: postgres
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/open_chat_circle
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL}
+      AI_AGENT_TOKEN: ${AI_AGENT_TOKEN}
+      AI_ASSISTANT_ACCOUNT: ${AI_ASSISTANT_ACCOUNT}
+      AI_ASSISTANT_NICKNAME: ${AI_ASSISTANT_NICKNAME}
     depends_on:
       postgres:
         condition: service_healthy

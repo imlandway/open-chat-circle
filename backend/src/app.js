@@ -11,10 +11,12 @@ import { createStore } from './store/createStore.js';
 import { AuthService } from './modules/auth/service.js';
 import { SocialService } from './modules/social/service.js';
 import { ChatService } from './modules/chat/service.js';
+import { AiService } from './modules/ai/service.js';
 import { registerAuthRoutes } from './modules/auth/routes.js';
 import { registerSocialRoutes } from './modules/social/routes.js';
 import { registerChatRoutes } from './modules/chat/routes.js';
 import { registerStorageRoutes } from './modules/storage/routes.js';
+import { registerAiRoutes } from './modules/ai/routes.js';
 
 class RealtimeHub {
   constructor() {
@@ -126,6 +128,18 @@ export async function buildApp() {
   const realtimeHub = new RealtimeHub();
 
   await authService.ensureSeedAdmin();
+  await authService.ensureAssistantUser({
+    account: config.aiAssistantAccount,
+    nickname: config.aiAssistantNickname,
+  });
+
+  const aiService = new AiService({
+    store,
+    config,
+    authService,
+    chatService,
+    realtimeHub,
+  });
 
   app.decorate('config', config);
   app.decorate('store', store);
@@ -133,6 +147,7 @@ export async function buildApp() {
   app.decorate('authService', authService);
   app.decorate('socialService', socialService);
   app.decorate('chatService', chatService);
+  app.decorate('aiService', aiService);
   app.decorate('realtimeHub', realtimeHub);
 
   await app.register(cors, {
@@ -203,6 +218,7 @@ export async function buildApp() {
   await registerSocialRoutes(app);
   await registerChatRoutes(app);
   await registerStorageRoutes(app);
+  await registerAiRoutes(app);
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof AppError) {

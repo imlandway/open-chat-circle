@@ -500,6 +500,7 @@ export class ChatService {
       avatarUrl: conversation.type === 'direct'
         ? (directPeer?.avatarUrl || '')
         : (conversation.avatarUrl || ''),
+      isAssistant: conversation.type === 'direct' && Boolean(directPeer?.isAssistant),
       memberIds: conversation.memberIds,
       members: peers.map((user) => ({
         id: user.id,
@@ -507,6 +508,7 @@ export class ChatService {
         avatarUrl: user.avatarUrl,
         account: user.account,
         isAdmin: Boolean(user.isAdmin),
+        isAssistant: Boolean(user.isAssistant),
       })),
       createdBy: conversation.createdBy,
       owner: owner
@@ -515,6 +517,7 @@ export class ChatService {
             nickname: owner.nickname,
             avatarUrl: owner.avatarUrl,
             account: owner.account,
+            isAssistant: Boolean(owner.isAssistant),
           }
         : null,
       canManageMembers: conversation.type === 'group' && conversation.createdBy === viewerUserId,
@@ -541,6 +544,7 @@ export class ChatService {
             nickname: sender.nickname,
             avatarUrl: sender.avatarUrl,
             account: sender.account,
+            isAssistant: Boolean(sender.isAssistant),
           }
         : null,
       replyTo: this.serializeReplyTarget(message.replyToMessageId, users, messagesById),
@@ -574,6 +578,7 @@ export class ChatService {
             nickname: sender.nickname,
             avatarUrl: sender.avatarUrl,
             account: sender.account,
+            isAssistant: Boolean(sender.isAssistant),
           }
         : null,
     };

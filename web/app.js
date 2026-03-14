@@ -599,6 +599,9 @@ function startChatResize(event) {
 
 async function hydrateApp() {
   await ensureSession();
+  if (state.session.user.isAdmin) {
+    await ensureAssistantConversation();
+  }
   await Promise.all([hydrateSideData(), hydrateConversations()]);
   connectRealtime();
   render();
@@ -641,6 +644,13 @@ async function hydrateConversations() {
   }
 
   render();
+}
+
+async function ensureAssistantConversation() {
+  const response = await api('/api/ai/conversation', {
+    method: 'POST',
+  });
+  mergeConversation(response.conversation);
 }
 
 async function selectConversation(conversationId) {
@@ -2612,10 +2622,17 @@ function normalizeAvatarFileName(fileName) {
 
 function mergeConversation(conversation) {
   const index = state.conversations.findIndex((item) => item.id === conversation.id);
+  const mergedConversation = index === -1
+    ? conversation
+    : {
+        ...state.conversations[index],
+        ...conversation,
+        agentOnline: conversation.agentOnline ?? state.conversations[index].agentOnline,
+      };
   if (index === -1) {
-    state.conversations.unshift(conversation);
+    state.conversations.unshift(mergedConversation);
   } else {
-    state.conversations[index] = conversation;
+    state.conversations[index] = mergedConversation;
   }
 
   state.conversations.sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
@@ -2675,6 +2692,11 @@ function getReplyPreviewText(message) {
 }
 
 function getConversationMeta(conversation) {
+  if (conversation.isAssistant) {
+    return conversation.agentOnline
+      ? 'AI 助手 · 本地 agent 已连接'
+      : 'AI 助手 · 本地 agent 未连接';
+  }
   if (conversation.type === 'direct') {
     const peer = conversation.members.find((member) => member.id !== state.session.user.id);
     return peer ? `与 ${peer.nickname} 的私聊` : '私聊';

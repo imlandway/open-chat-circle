@@ -5,6 +5,7 @@ import { DEFAULT_COLLECTIONS } from './defaultCollections.js';
 export class JsonStore {
   constructor(dataDir) {
     this.dataDir = dataDir;
+    this.mutationQueue = Promise.resolve();
   }
 
   async ensureCollection(name) {
@@ -35,10 +36,15 @@ export class JsonStore {
   }
 
   async mutate(name, updater) {
-    const current = await this.read(name);
-    const next = await updater(structuredClone(current));
-    await this.write(name, next);
-    return next;
+    const operation = this.mutationQueue.then(async () => {
+      const current = await this.read(name);
+      const next = await updater(structuredClone(current));
+      await this.write(name, next);
+      return next;
+    });
+
+    this.mutationQueue = operation.catch(() => undefined);
+    return operation;
   }
 
   async close() {}

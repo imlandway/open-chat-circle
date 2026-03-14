@@ -21,6 +21,7 @@ function toSafeUser(user) {
     status: user.status,
     createdAt: user.createdAt,
     isAdmin: Boolean(user.isAdmin),
+    isAssistant: Boolean(user.isAssistant),
   };
 }
 
@@ -56,7 +57,12 @@ export class SocialService {
     const friendIds = this.getFriendIds(friendships, currentUserId);
 
     return users
-      .filter((user) => user.id !== currentUserId && user.status === 'active' && !friendIds.has(user.id))
+      .filter((user) => (
+        user.id !== currentUserId
+        && user.status === 'active'
+        && !user.isAssistant
+        && !friendIds.has(user.id)
+      ))
       .filter((user) => {
         if (!keyword) {
           return true;
@@ -146,6 +152,7 @@ export class SocialService {
     assert(actor.isAdmin, 403, 'Only admins can view users.');
     const users = await this.store.read(USERS);
     return users
+      .filter((user) => !user.isAssistant)
       .map((user) => toSafeUser(user))
       .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
   }
@@ -176,6 +183,7 @@ export class SocialService {
     const users = await this.store.read(USERS);
     const target = users.find((user) => user.id === targetUserId);
     assert(target, 404, 'Target user not found.');
+    assert(!target.isAssistant, 400, 'Assistant accounts cannot be banned.');
     assert(!target.isAdmin, 400, 'Admin accounts cannot be banned.');
 
     target.status = 'banned';

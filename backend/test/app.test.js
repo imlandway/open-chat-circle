@@ -8,6 +8,7 @@ import { AuthService } from '../src/modules/auth/service.js';
 import { SessionService } from '../src/core/security/session.js';
 import { SocialService } from '../src/modules/social/service.js';
 import { ChatService } from '../src/modules/chat/service.js';
+import { AiService } from '../src/modules/ai/service.js';
 import { buildApp } from '../src/app.js';
 
 test('register -> create direct conversation -> send message -> mark read', async () => {
@@ -377,6 +378,167 @@ test('users can update profile and password while admins can list users and rese
     password: 'resetpass123',
   });
   assert.equal(resetLogin.user.nickname, 'Alice New');
+
+  await rm(dataDir, { recursive: true, force: true });
+});
+
+test('admin can create an assistant conversation and get an offline-agent reply', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
+  const store = new JsonStore(dataDir);
+  const sessionService = new SessionService('test-secret');
+  const authService = new AuthService(store, sessionService);
+  const chatService = new ChatService(store);
+  const aiService = new AiService({
+    store,
+    authService,
+    chatService,
+    realtimeHub: {
+      broadcastUsers() {},
+    },
+    config: {
+      openaiApiKey: 'test-key',
+      openaiModel: 'gpt-test',
+      aiAssistantAccount: 'codex',
+      aiAssistantNickname: 'AI 助手',
+      aiAgentToken: 'agent-token',
+    },
+    openaiClient: {
+      async createResponse(payload) {
+        if (!payload.previous_response_id) {
+          return {
+            id: 'resp_1',
+            output: [
+              {
+                type: 'function_call',
+                name: 'shell_run',
+                call_id: 'call_1',
+                arguments: JSON.stringify({ command: 'Get-Location' }),
+              },
+            ],
+          };
+        }
+
+        return {
+          id: 'resp_2',
+          output_text: '本地 agent 未连接，暂时无法操作这台电脑。',
+          output: [
+            {
+              type: 'message',
+              content: [
+                {
+                  type: 'output_text',
+                  text: '本地 agent 未连接，暂时无法操作这台电脑。',
+                },
+              ],
+            },
+          ],
+        };
+      },
+    },
+  });
+
+  await authService.ensureSeedAdmin();
+  const admin = await authService.getUserById('user_admin');
+  const conversation = await aiService.ensureAssistantConversation(admin);
+  assert.equal(conversation.isAssistant, true);
+  assert.equal(conversation.agentOnline, false);
+
+  const sent = await chatService.sendMessage(admin.id, conversation.id, {
+    type: 'text',
+    text: '帮我运行一下测试',
+  });
+  await aiService.enqueueConversationRun({
+    actorUserId: admin.id,
+    conversationId: conversation.id,
+    triggerMessageId: sent.message.id,
+  });
+  await aiService.waitForConversationIdle(conversation.id);
+
+  const messages = await chatService.listMessages(admin.id, conversation.id);
+  const assistantReply = messages.at(-1);
+  assert.equal(assistantReply.sender.isAssistant, true);
+  assert.match(assistantReply.text, /本地 agent 未连接/);
+
+  await rm(dataDir, { recursive: true, force: true });
+});
+
+test('assistant runs stay serialized per conversation', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
+  const store = new JsonStore(dataDir);
+  const sessionService = new SessionService('test-secret');
+  const authService = new AuthService(store, sessionService);
+  const chatService = new ChatService(store);
+  let responseCount = 0;
+
+  const aiService = new AiService({
+    store,
+    authService,
+    chatService,
+    realtimeHub: {
+      broadcastUsers() {},
+    },
+    config: {
+      openaiApiKey: 'test-key',
+      openaiModel: 'gpt-test',
+      aiAssistantAccount: 'codex',
+      aiAssistantNickname: 'AI 助手',
+      aiAgentToken: 'agent-token',
+    },
+    openaiClient: {
+      async createResponse() {
+        responseCount += 1;
+        return {
+          id: `resp_${responseCount}`,
+          output_text: `reply ${responseCount}`,
+          output: [
+            {
+              type: 'message',
+              content: [
+                {
+                  type: 'output_text',
+                  text: `reply ${responseCount}`,
+                },
+              ],
+            },
+          ],
+        };
+      },
+    },
+  });
+
+  await authService.ensureSeedAdmin();
+  const admin = await authService.getUserById('user_admin');
+  const conversation = await aiService.ensureAssistantConversation(admin);
+
+  const first = await chatService.sendMessage(admin.id, conversation.id, {
+    type: 'text',
+    text: 'first request',
+  });
+  const second = await chatService.sendMessage(admin.id, conversation.id, {
+    type: 'text',
+    text: 'second request',
+  });
+
+  await Promise.all([
+    aiService.enqueueConversationRun({
+      actorUserId: admin.id,
+      conversationId: conversation.id,
+      triggerMessageId: first.message.id,
+    }),
+    aiService.enqueueConversationRun({
+      actorUserId: admin.id,
+      conversationId: conversation.id,
+      triggerMessageId: second.message.id,
+    }),
+  ]);
+  await aiService.waitForConversationIdle(conversation.id);
+
+  const messages = await chatService.listMessages(admin.id, conversation.id);
+  const assistantReplies = messages.filter((message) => message.sender?.isAssistant);
+  assert.deepEqual(
+    assistantReplies.map((message) => message.text),
+    ['reply 1', 'reply 2'],
+  );
 
   await rm(dataDir, { recursive: true, force: true });
 });

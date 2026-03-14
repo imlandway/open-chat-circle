@@ -35,6 +35,12 @@ export class AuthService {
     return users.find((user) => user.id === userId);
   }
 
+  async getUserByAccount(account) {
+    const normalizedAccount = normalizeAccount(account);
+    const users = await this.store.read(USERS);
+    return users.find((user) => user.account === normalizedAccount);
+  }
+
   async ensureSeedAdmin() {
     const users = await this.store.read(USERS);
     const defaultPassword = process.env.SEED_ADMIN_PASSWORD ?? 'chatcircle123';
@@ -59,6 +65,44 @@ export class AuthService {
       isAdmin: true,
     });
     await this.store.write(USERS, users);
+  }
+
+  async ensureAssistantUser({ account, nickname }) {
+    const normalizedAccount = normalizeAccount(account);
+    assert(normalizedAccount, 500, 'Assistant account is invalid.');
+
+    const users = await this.store.read(USERS);
+    const existingAssistant = users.find((user) => user.isAssistant);
+    const conflictingUser = users.find(
+      (user) => user.account === normalizedAccount && !user.isAssistant,
+    );
+
+    assert(!conflictingUser, 500, `Assistant account "${normalizedAccount}" is already taken.`);
+
+    if (existingAssistant) {
+      existingAssistant.account = normalizedAccount;
+      existingAssistant.nickname = nickname?.trim() || existingAssistant.nickname || 'AI 助手';
+      existingAssistant.status = 'active';
+      existingAssistant.isAssistant = true;
+      await this.store.write(USERS, users);
+      return existingAssistant;
+    }
+
+    const assistantUser = {
+      id: 'user_codex',
+      account: normalizedAccount,
+      nickname: nickname?.trim() || 'AI 助手',
+      avatarUrl: '',
+      passwordHash: hashPassword(`assistant-${randomUUID()}`),
+      status: 'active',
+      createdAt: new Date().toISOString(),
+      isAdmin: false,
+      isAssistant: true,
+    };
+
+    users.push(assistantUser);
+    await this.store.write(USERS, users);
+    return assistantUser;
   }
 
   async registerWithInvite({ inviteCode, nickname, password }) {
@@ -173,6 +217,7 @@ export class AuthService {
       status: user.status,
       createdAt: user.createdAt,
       isAdmin: Boolean(user.isAdmin),
+      isAssistant: Boolean(user.isAssistant),
     };
   }
 }

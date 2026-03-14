@@ -5,4 +5,7 @@ export const DEFAULT_COLLECTIONS = {
   conversations: [],
   messages: [],
   readStates: [],
+  assistantRuns: [],
+  agentJobs: [],
+  agentSessions: [],
 };
