@@ -52,7 +52,7 @@ function toCodexCliErrorMessage(error, executable) {
 async function runCodexExec({ executable, model, prompt, cwd }) {
   return execFileAsync(
     executable,
-    ['exec', '--ask-for-approval', 'never', '--model', model, prompt],
+    ['exec', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '--model', model, prompt],
     {
       cwd,
       timeout: 1000 * 60 * 10,
@@ -64,8 +64,8 @@ async function runCodexExec({ executable, model, prompt, cwd }) {
 
 async function runCodexViaNpx({ model, prompt, cwd }) {
   return execFileAsync(
-    getNpxExecutable(),
-    ['--yes', '@openai/codex', 'exec', '--ask-for-approval', 'never', '--model', model, prompt],
+    process.env.ComSpec || 'cmd.exe',
+    ['/d', '/s', '/c', getNpxExecutable(), '--yes', '@openai/codex', 'exec', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '--model', model, prompt],
     {
       cwd,
       timeout: 1000 * 60 * 10,
