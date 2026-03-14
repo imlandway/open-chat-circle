@@ -585,14 +585,21 @@ input[type="password"]:focus {
   overflow: auto;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
   gap: 12px;
   padding: 18px 20px;
   width: 100%;
 }
 
+.message-list > :first-child {
+  margin-top: auto;
+}
+
 .message-list.empty {
   justify-content: center;
+}
+
+.message-list.empty > :first-child {
+  margin-top: 0;
 }
 
 .chat-resizer {
