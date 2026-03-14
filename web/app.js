@@ -33,6 +33,8 @@ state = {
 };
 
 const authPanel = document.querySelector('#auth-panel');
+const main = document.querySelector('.main');
+const content = document.querySelector('.content');
 const navRail = document.querySelector('#nav-rail');
 const navMineBtn = document.querySelector('#nav-mine-btn');
 const navAdminBtn = document.querySelector('#nav-admin-btn');
@@ -1119,6 +1121,8 @@ function render() {
     state.navSection = 'conversations';
   }
 
+  main.classList.toggle('auth-only', !authenticated);
+  content.classList.toggle('auth-only', !authenticated);
   navRail.classList.toggle('hidden', !authenticated);
   authPanel.classList.toggle('hidden', authenticated);
   userPanel.classList.toggle('hidden', !authenticated || state.navSection !== 'mine');

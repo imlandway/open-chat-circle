@@ -168,6 +168,52 @@ button {
   flex: 1;
 }
 
+.main.auth-only {
+  align-items: center;
+  justify-content: flex-start;
+  padding: clamp(52px, 11vh, 110px) 20px 36px;
+  gap: 18px;
+  overflow: auto;
+}
+
+.main.auth-only .topbar {
+  width: min(100%, 460px);
+  padding: 0;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.main.auth-only .topbar-copy {
+  width: 100%;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+}
+
+.content.auth-only {
+  width: min(100%, 460px);
+  display: block;
+  min-height: auto;
+  flex: 0 0 auto;
+}
+
+.content.auth-only .sidebar-column {
+  overflow: visible;
+  padding: 0;
+  background: transparent;
+}
+
+.content.auth-only .chat-column {
+  display: none;
+}
+
+.content.auth-only #auth-panel {
+  width: 100%;
+  padding: 18px;
+}
+
 .sidebar-column {
   min-width: 0;
   overflow: auto;
@@ -1026,6 +1072,15 @@ dialog::backdrop {
     border-right: 0;
     border-bottom: 1px solid var(--border);
   }
+
+  .main.auth-only {
+    padding-top: 44px;
+  }
+
+  .content.auth-only,
+  .main.auth-only .topbar {
+    width: min(100%, 420px);
+  }
 }
 
 @media (max-width: 760px) {
@@ -1035,6 +1090,20 @@ dialog::backdrop {
 
   .topbar {
     padding: 14px;
+  }
+
+  .main.auth-only {
+    padding: 28px 14px 24px;
+    gap: 14px;
+  }
+
+  .content.auth-only,
+  .main.auth-only .topbar {
+    width: 100%;
+  }
+
+  .content.auth-only #auth-panel {
+    padding: 16px;
   }
 
   .composer {
