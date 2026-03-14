@@ -580,8 +580,8 @@ input[type="password"]:focus {
 }
 
 .message-list {
-  flex: none;
-  min-height: 96px;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -600,25 +600,6 @@ input[type="password"]:focus {
 
 .message-list.empty > :first-child {
   margin-top: 0;
-}
-
-.chat-resizer {
-  margin-top: auto;
-  height: 18px;
-  cursor: row-resize;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  flex-shrink: 0;
-}
-
-.chat-resizer::before {
-  content: "";
-  width: 72px;
-  height: 5px;
-  border-radius: 999px;
-  background: rgba(17, 17, 17, 0.12);
 }
 
 .message-row {

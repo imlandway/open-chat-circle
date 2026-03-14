@@ -1,6 +1,3 @@
-const CHAT_HEIGHT_STORAGE_VERSION = '6';
-const DEFAULT_CHAT_LIST_HEIGHT = -1;
-const MIN_CHAT_LIST_HEIGHT = 96;
 const REMEMBERED_ACCOUNTS_KEY = 'open-chat-circle-remembered-accounts';
 const LEGACY_REMEMBERED_KEY = 'open-chat-circle-remembered';
 const MAX_REMEMBERED_ACCOUNTS = 8;
@@ -32,7 +29,6 @@ state = {
   messageContextMenu: null,
   realtimeSource: null,
   pollingTimer: null,
-  chatListHeight: loadChatListHeight(),
   avatarCrop: createEmptyAvatarCropState(),
 };
 
@@ -50,7 +46,6 @@ const conversationList = document.querySelector('#conversation-list');
 const messageList = document.querySelector('#message-list');
 const emptyState = document.querySelector('#empty-state');
 const chatPanel = document.querySelector('#chat-panel');
-const chatResizer = document.querySelector('#chat-resizer');
 const chatTitle = document.querySelector('#chat-title');
 const chatMeta = document.querySelector('#chat-meta');
 const chatAvatar = document.querySelector('#chat-avatar');
@@ -212,7 +207,6 @@ function wireStaticEvents() {
     await submitImageMessage();
   });
 
-  chatResizer.addEventListener('pointerdown', startChatResize);
   messageList.addEventListener('contextmenu', onMessageBubbleContextMenu);
   chatAvatar.addEventListener('click', () => {
     if (state.activeConversation?.type === 'group') {
@@ -311,7 +305,6 @@ function wireStaticEvents() {
       initializeAvatarCrop();
     }
     closeMessageContextMenu();
-    applyChatHeight();
   });
 
   window.addEventListener('beforeunload', () => {
@@ -541,62 +534,6 @@ function syncRememberedPassword(password) {
     };
   }));
   state.selectedRememberedUserId = state.session.user.id;
-}
-
-function loadChatListHeight() {
-  const version = localStorage.getItem('open-chat-circle-chat-height-version');
-  if (version !== CHAT_HEIGHT_STORAGE_VERSION) {
-    localStorage.setItem('open-chat-circle-chat-height-version', CHAT_HEIGHT_STORAGE_VERSION);
-    localStorage.setItem('open-chat-circle-chat-height', String(DEFAULT_CHAT_LIST_HEIGHT));
-    return DEFAULT_CHAT_LIST_HEIGHT;
-  }
-
-  const raw = localStorage.getItem('open-chat-circle-chat-height');
-  const value = Number(raw);
-  return Number.isFinite(value) && value > 0 ? value : DEFAULT_CHAT_LIST_HEIGHT;
-}
-
-function saveChatListHeight(height) {
-  localStorage.setItem('open-chat-circle-chat-height-version', CHAT_HEIGHT_STORAGE_VERSION);
-  localStorage.setItem('open-chat-circle-chat-height', String(height));
-}
-
-function applyChatHeight() {
-  if (chatPanel.classList.contains('hidden')) {
-    return;
-  }
-
-  const panelHeight = chatPanel.getBoundingClientRect().height;
-  const headerHeight = chatPanel.querySelector('.chat-header')?.offsetHeight || 0;
-  const composerHeight = messageForm.offsetHeight || 0;
-  const resizerHeight = chatResizer.offsetHeight || 0;
-  const maxHeight = Math.max(MIN_CHAT_LIST_HEIGHT, panelHeight - headerHeight - composerHeight - resizerHeight);
-  const preferredHeight = state.chatListHeight > 0 ? state.chatListHeight : maxHeight;
-  const nextHeight = clamp(preferredHeight, MIN_CHAT_LIST_HEIGHT, maxHeight);
-
-  state.chatListHeight = nextHeight;
-  messageList.style.height = `${nextHeight}px`;
-  saveChatListHeight(nextHeight);
-}
-
-function startChatResize(event) {
-  event.preventDefault();
-
-  const startY = event.clientY;
-  const startHeight = messageList.getBoundingClientRect().height;
-
-  function onPointerMove(moveEvent) {
-    state.chatListHeight = startHeight + (moveEvent.clientY - startY);
-    applyChatHeight();
-  }
-
-  function onPointerUp() {
-    window.removeEventListener('pointermove', onPointerMove);
-    window.removeEventListener('pointerup', onPointerUp);
-  }
-
-  window.addEventListener('pointermove', onPointerMove);
-  window.addEventListener('pointerup', onPointerUp);
 }
 
 async function hydrateApp() {
@@ -1903,9 +1840,6 @@ function renderMessages() {
   chatMeta.textContent = getConversationMeta(state.activeConversation);
   chatAvatar.classList.toggle('clickable-avatar', state.activeConversation.type === 'group');
   renderReplyPreview();
-  requestAnimationFrame(() => {
-    applyChatHeight();
-  });
 
   if (state.messages.length === 0) {
     messageList.classList.add('empty');
@@ -2899,8 +2833,4 @@ function escapeHtml(value) {
 
 function escapeAttribute(value) {
   return escapeHtml(value);
-}
-
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
 }
