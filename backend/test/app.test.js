@@ -1028,3 +1028,255 @@ test('group assistant targeting prefers mentioned codex and defaults to deepseek
 
   await rm(dataDir, { recursive: true, force: true });
 });
+
+test('group codex small talk replies immediately without relay timeout', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
+  const store = new JsonStore(dataDir);
+  const sessionService = new SessionService('test-secret');
+  const authService = new AuthService(store, sessionService);
+  const socialService = new SocialService(store);
+  const chatService = new ChatService(store);
+  const aiService = new AiService({
+    store,
+    authService,
+    chatService,
+    realtimeHub: {
+      broadcastUsers() {},
+    },
+    config: {
+      aiExecutionMode: 'local_codex',
+      aiAgentToken: 'agent-token',
+    },
+  });
+
+  await authService.ensureSeedAdmin();
+  await store.write('invites', [
+    {
+      id: 'invite_test',
+      code: 'TEST-OPEN',
+      createdBy: 'user_admin',
+      maxUses: 10,
+      usedCount: 0,
+      expiresAt: '2027-01-01T00:00:00.000Z',
+      status: 'active',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    },
+  ]);
+
+  const admin = await authService.getUserById('user_admin');
+  const friend = await authService.registerWithInvite({
+    inviteCode: 'TEST-OPEN',
+    nickname: 'Bob',
+    password: 'password123',
+  });
+  await socialService.addFriend(admin.id, { userId: friend.user.id });
+
+  const codex = await aiService.getAssistantUser('codex');
+  const deepseek = await aiService.getAssistantUser('deepseek');
+  const group = await chatService.createGroupConversation(admin.id, {
+    name: 'AI Group',
+    memberIds: [friend.user.id, codex.id, deepseek.id],
+  });
+
+  const sent = await chatService.sendMessage(admin.id, group.id, {
+    type: 'text',
+    text: 'codex你说句话',
+  });
+
+  await aiService.enqueueConversationRun({
+    actorUserId: admin.id,
+    conversationId: group.id,
+    triggerMessageId: sent.message.id,
+    assistantUserId: codex.id,
+  });
+  await aiService.waitForConversationIdle(group.id);
+
+  const messages = await chatService.listMessages(admin.id, group.id);
+  assert.equal(messages.at(-1).sender.id, codex.id);
+  assert.equal(messages.at(-1).text, '我在。直接告诉我你想让我做什么。');
+
+  await rm(dataDir, { recursive: true, force: true });
+});
+
+test('group assistant runs are serialized per assistant instead of blocking each other', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
+  const store = new JsonStore(dataDir);
+  const sessionService = new SessionService('test-secret');
+  const authService = new AuthService(store, sessionService);
+  const socialService = new SocialService(store);
+  const chatService = new ChatService(store);
+
+  let providerStartCount = 0;
+  const aiService = new AiService({
+    store,
+    authService,
+    chatService,
+    realtimeHub: {
+      broadcastUsers() {},
+    },
+    config: {
+      openaiApiKey: 'test-key',
+      openaiModel: 'gpt-test',
+      aiAgentToken: 'agent-token',
+    },
+    aiClient: {
+      async start({ messages }) {
+        providerStartCount += 1;
+        const lastMessage = messages.at(-1)?.text || '';
+        return {
+          text: `deepseek:${lastMessage}`,
+        };
+      },
+      async continue() {
+        throw new Error('continue should not be called in this test');
+      },
+      getToolCalls() {
+        return [];
+      },
+      getText(state) {
+        return state.text;
+      },
+    },
+  });
+
+  aiService.requestAgentJob = async ({ toolName }) => {
+    if (toolName !== 'codex_run') {
+      throw new Error(`unexpected tool ${toolName}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    return {
+      type: 'text',
+      text: 'codex:我在。',
+      error: '',
+    };
+  };
+
+  await authService.ensureSeedAdmin();
+  await store.write('invites', [
+    {
+      id: 'invite_test',
+      code: 'TEST-OPEN',
+      createdBy: 'user_admin',
+      maxUses: 10,
+      usedCount: 0,
+      expiresAt: '2027-01-01T00:00:00.000Z',
+      status: 'active',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    },
+  ]);
+
+  const admin = await authService.getUserById('user_admin');
+  const friend = await authService.registerWithInvite({
+    inviteCode: 'TEST-OPEN',
+    nickname: 'Bob',
+    password: 'password123',
+  });
+  await socialService.addFriend(admin.id, { userId: friend.user.id });
+
+  const codex = await aiService.getAssistantUser('codex');
+  const deepseek = await aiService.getAssistantUser('deepseek');
+  const group = await chatService.createGroupConversation(admin.id, {
+    name: 'AI Group',
+    memberIds: [friend.user.id, codex.id, deepseek.id],
+  });
+  const sent = await chatService.sendMessage(admin.id, group.id, {
+    type: 'text',
+    text: '@codex 和 @deepseek 都说一句',
+  });
+
+  await Promise.all([
+    aiService.enqueueConversationRun({
+      actorUserId: admin.id,
+      conversationId: group.id,
+      triggerMessageId: sent.message.id,
+      assistantUserId: codex.id,
+    }),
+    aiService.enqueueConversationRun({
+      actorUserId: admin.id,
+      conversationId: group.id,
+      triggerMessageId: sent.message.id,
+      assistantUserId: deepseek.id,
+    }),
+  ]);
+  await aiService.waitForConversationIdle(group.id);
+
+  const messages = await chatService.listMessages(admin.id, group.id);
+  const assistantMessages = messages.filter((message) => message.sender?.isAssistant);
+  assert.equal(providerStartCount, 1);
+  assert.deepEqual(
+    assistantMessages.map((message) => message.sender.account).sort(),
+    ['codex', 'deepseek'],
+  );
+
+  await rm(dataDir, { recursive: true, force: true });
+});
+
+test('legacy groups with codex now gain deepseek instead of losing codex', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
+  const store = new JsonStore(dataDir);
+  const sessionService = new SessionService('test-secret');
+  const authService = new AuthService(store, sessionService);
+  const socialService = new SocialService(store);
+  const chatService = new ChatService(store);
+  const aiService = new AiService({
+    store,
+    authService,
+    chatService,
+    realtimeHub: {
+      broadcastUsers() {},
+    },
+    config: {
+      openaiApiKey: 'test-key',
+      openaiModel: 'gpt-test',
+      aiAgentToken: 'agent-token',
+    },
+  });
+
+  await authService.ensureSeedAdmin();
+  await store.write('invites', [
+    {
+      id: 'invite_test',
+      code: 'TEST-OPEN',
+      createdBy: 'user_admin',
+      maxUses: 10,
+      usedCount: 0,
+      expiresAt: '2027-01-01T00:00:00.000Z',
+      status: 'active',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    },
+  ]);
+
+  const admin = await authService.getUserById('user_admin');
+  const friend = await authService.registerWithInvite({
+    inviteCode: 'TEST-OPEN',
+    nickname: 'Bob',
+    password: 'password123',
+  });
+  await socialService.addFriend(admin.id, { userId: friend.user.id });
+
+  const codex = await aiService.getAssistantUser('codex');
+  await chatService.createGroupConversation(admin.id, {
+    name: 'Legacy AI Group',
+    memberIds: [friend.user.id, codex.id],
+  });
+
+  await aiService.ensureAssistantConversations(admin);
+
+  const groups = await chatService.listConversations(admin.id);
+  const legacyGroup = groups.find((conversation) => conversation.name === 'Legacy AI Group');
+  assert(legacyGroup);
+
+  const assistants = await aiService.getConversationAssistants(legacyGroup.id);
+  assert.deepEqual(
+    assistants.map((assistant) => assistant.kind).sort(),
+    ['codex', 'deepseek'],
+  );
+
+  const targets = await aiService.resolveMessageAssistants(legacyGroup.id, '@codex @deepseek 都评价一下这个群名');
+  assert.deepEqual(
+    targets.map((assistant) => assistant.kind).sort(),
+    ['codex', 'deepseek'],
+  );
+
+  await rm(dataDir, { recursive: true, force: true });
+});

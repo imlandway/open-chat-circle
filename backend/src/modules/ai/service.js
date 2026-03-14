@@ -204,12 +204,33 @@ function buildCloudAssistantPrompt(assistantName = 'DeepSeek') {
 }
 
 function isSmallTalkInstruction(text) {
-  const normalized = String(text || '').trim().toLowerCase();
+  const normalized = normalizeConversationInstruction(text);
   if (!normalized) {
     return true;
   }
 
-  return /^(嘿|嗨|哈喽|hello|hi|hey|在吗|在么|你好|yo|喂)$/i.test(normalized);
+  return /^(嘿|嗨|哈喽|hello|hi|hey|在吗|在么|你好|yo|喂|你说句话|说句话|你也说一句|说一句|怎么看|怎么想的|评价一下|你觉得呢)$/i.test(normalized);
+}
+
+function normalizeConversationInstruction(text) {
+  let normalized = String(text || '').trim();
+  normalized = normalized.replace(/^[^:\n]{1,40}:\s*/, '');
+  normalized = normalized
+    .replace(/@?(codex|deepseek)/gi, ' ')
+    .replace(/[，,。！？!?:：；;]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  return normalized;
+}
+
+function buildCodexConversationalReply(text) {
+  const normalized = normalizeConversationInstruction(text);
+  if (/怎么看|怎么想|评价/.test(normalized)) {
+    return '我觉得这个方向挺直接，也好记，适合轻松交流。';
+  }
+
+  return '我在。直接告诉我你想让我做什么。';
 }
 
 function normalizeAssistantText(text) {
@@ -753,25 +774,32 @@ export class AiService {
       return runs;
     });
 
-    const previous = this.runLocks.get(conversationId) ?? Promise.resolve();
+    const lockKey = this.getRunLockKey(conversationId, assistant.user.id);
+    const previous = this.runLocks.get(lockKey) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
       .then(() => this.processRun(run.id))
       .finally(() => {
-        if (this.runLocks.get(conversationId) === next) {
-          this.runLocks.delete(conversationId);
+        if (this.runLocks.get(lockKey) === next) {
+          this.runLocks.delete(lockKey);
         }
       });
 
-    this.runLocks.set(conversationId, next);
+    this.runLocks.set(lockKey, next);
     return run;
   }
 
   async waitForConversationIdle(conversationId) {
-    const lock = this.runLocks.get(conversationId);
-    if (lock) {
-      await lock;
-    }
+    const prefix = `${conversationId}:`;
+    await Promise.all(
+      [...this.runLocks.entries()]
+        .filter(([key]) => key === conversationId || key.startsWith(prefix))
+        .map(([, lock]) => lock.catch(() => undefined)),
+    );
+  }
+
+  getRunLockKey(conversationId, assistantUserId = '') {
+    return `${conversationId}:${assistantUserId || 'default'}`;
   }
 
   async processRun(runId) {
@@ -883,7 +911,7 @@ export class AiService {
     if (isSmallTalkInstruction(instruction)) {
       const message = await this.postAssistantText(
         run.conversationId,
-        '我在。直接告诉我你想让我做什么。',
+        buildCodexConversationalReply(instruction),
         run.assistantUserId,
       );
       await this.finishRun(runId, {
@@ -1254,9 +1282,7 @@ export class AiService {
 
       return {
         ...conversation,
-        memberIds: conversation.memberIds.map((memberId) => (
-          memberId === codex.user.id ? deepseek.user.id : memberId
-        )),
+        memberIds: [...new Set([...conversation.memberIds, deepseek.user.id])],
         updatedAt: new Date().toISOString(),
       };
     }));
