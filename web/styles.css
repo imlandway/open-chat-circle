@@ -635,7 +635,7 @@ input[type="password"]:focus {
 }
 
 .message-bubble {
-  max-width: min(440px, 88%);
+  max-width: min(920px, 96%);
   padding: 10px 12px;
   border-radius: 6px;
   box-shadow: none;
@@ -654,8 +654,8 @@ input[type="password"]:focus {
 }
 
 .message-image {
-  max-width: min(320px, 100%);
-  max-height: 240px;
+  max-width: min(860px, 100%);
+  max-height: 520px;
   border-radius: 6px;
   display: block;
   margin-bottom: 8px;
