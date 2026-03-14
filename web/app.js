@@ -534,7 +534,7 @@ function syncRememberedPassword(password) {
 async function hydrateApp() {
   await ensureSession();
   if (state.session.user.isAdmin) {
-    await ensureAssistantConversation();
+    await ensureAssistantConversations();
   }
   await Promise.all([hydrateSideData(), hydrateConversations()]);
   connectRealtime();
@@ -580,11 +580,13 @@ async function hydrateConversations() {
   render();
 }
 
-async function ensureAssistantConversation() {
-  const response = await api('/api/ai/conversation', {
+async function ensureAssistantConversations() {
+  const response = await api('/api/ai/conversations', {
     method: 'POST',
   });
-  mergeConversation(response.conversation);
+  for (const conversation of response.conversations || []) {
+    mergeConversation(conversation);
+  }
 }
 
 async function selectConversation(conversationId) {
@@ -2688,9 +2690,12 @@ function getReplyPreviewText(message) {
 
 function getConversationMeta(conversation) {
   if (conversation.isAssistant) {
-    return conversation.agentOnline
-      ? 'AI 助手 · 本地 agent 已连接'
-      : 'AI 助手 · 本地 agent 未连接';
+    if (conversation.assistantKind === 'codex') {
+      return conversation.agentOnline
+        ? 'Codex · 本地 agent 已连接'
+        : 'Codex · 本地 agent 未连接';
+    }
+    return 'DeepSeek · 云端 AI';
   }
   if (conversation.type === 'direct') {
     const peer = conversation.members.find((member) => member.id !== state.session.user.id);

@@ -67,12 +67,18 @@ export class AuthService {
     await this.store.write(USERS, users);
   }
 
-  async ensureAssistantUser({ account, nickname }) {
+  async ensureAssistantUser({ account, nickname, assistantKind = 'assistant' }) {
     const normalizedAccount = normalizeAccount(account);
     assert(normalizedAccount, 500, 'Assistant account is invalid.');
 
     const users = await this.store.read(USERS);
-    const existingAssistant = users.find((user) => user.isAssistant);
+    const existingAssistant = users.find((user) => (
+      user.isAssistant
+      && (
+        user.assistantKind === assistantKind
+        || user.account === normalizedAccount
+      )
+    ));
     const conflictingUser = users.find(
       (user) => user.account === normalizedAccount && !user.isAssistant,
     );
@@ -84,12 +90,13 @@ export class AuthService {
       existingAssistant.nickname = nickname?.trim() || existingAssistant.nickname || 'AI 助手';
       existingAssistant.status = 'active';
       existingAssistant.isAssistant = true;
+      existingAssistant.assistantKind = assistantKind;
       await this.store.write(USERS, users);
       return existingAssistant;
     }
 
     const assistantUser = {
-      id: 'user_codex',
+      id: `user_assistant_${assistantKind}`,
       account: normalizedAccount,
       nickname: nickname?.trim() || 'AI 助手',
       avatarUrl: '',
@@ -98,6 +105,7 @@ export class AuthService {
       createdAt: new Date().toISOString(),
       isAdmin: false,
       isAssistant: true,
+      assistantKind,
     };
 
     users.push(assistantUser);
@@ -218,6 +226,7 @@ export class AuthService {
       createdAt: user.createdAt,
       isAdmin: Boolean(user.isAdmin),
       isAssistant: Boolean(user.isAssistant),
+      assistantKind: user.assistantKind || '',
     };
   }
 }

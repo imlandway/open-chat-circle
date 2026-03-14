@@ -41,9 +41,15 @@ function getWebSocketTransport(connection) {
 }
 
 export async function registerAiRoutes(fastify) {
+  fastify.post('/api/ai/conversations', { preHandler: requireAdmin }, async (request) => {
+    return {
+      conversations: await fastify.aiService.ensureAssistantConversations(request.currentUser),
+    };
+  });
+
   fastify.post('/api/ai/conversation', { preHandler: requireAdmin }, async (request) => {
     return {
-      conversation: await fastify.aiService.ensureAssistantConversation(request.currentUser),
+      conversation: await fastify.aiService.ensureAssistantConversation(request.currentUser, 'codex'),
     };
   });
 

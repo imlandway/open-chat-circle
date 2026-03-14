@@ -168,9 +168,9 @@ function parseToolArguments(rawArguments) {
   }
 }
 
-function buildSystemPrompt() {
+function buildSystemPrompt(assistantName = 'Codex') {
   return [
-    'You are Codex inside Open Chat Circle.',
+    `You are ${assistantName} inside Open Chat Circle.`,
     'You are helping the admin operate their own Windows computer through a trusted local agent.',
     'Default to action, not discussion.',
     'Use tools whenever the user asks you to inspect files, run commands, edit code, or control the browser.',
@@ -545,11 +545,76 @@ export class AiService {
     this.activeAgentSessionId = null;
   }
 
-  async getAssistantUser() {
-    return this.authService.ensureAssistantUser({
-      account: this.config.aiAssistantAccount,
-      nickname: this.config.aiAssistantNickname,
-    });
+  getAssistantDefinitions() {
+    return [
+      {
+        kind: 'codex',
+        account: this.config.codexAssistantAccount || this.config.aiAssistantAccount || 'codex',
+        nickname: this.config.codexAssistantNickname || 'Codex',
+        executionMode: 'local_codex',
+      },
+      {
+        kind: 'deepseek',
+        account: this.config.deepseekAssistantAccount || 'deepseek',
+        nickname: this.config.deepseekAssistantNickname || 'DeepSeek',
+        executionMode: 'server_ai',
+      },
+    ];
+  }
+
+  async getAssistantUsers() {
+    const definitions = this.getAssistantDefinitions();
+    const users = [];
+    for (const definition of definitions) {
+      users.push(await this.authService.ensureAssistantUser({
+        account: definition.account,
+        nickname: definition.nickname,
+        assistantKind: definition.kind,
+      }));
+    }
+
+    return users.map((user, index) => ({
+      kind: definitions[index].kind,
+      account: definitions[index].account,
+      nickname: definitions[index].nickname,
+      executionMode: definitions[index].executionMode,
+      user,
+    }));
+  }
+
+  async getAssistantUser(kind = 'codex') {
+    const assistants = await this.getAssistantUsers();
+    const assistant = assistants.find((item) => item.kind === kind) || assistants[0];
+    return assistant?.user ?? null;
+  }
+
+  async getAssistantProfileByUserId(userId) {
+    const assistants = await this.getAssistantUsers();
+    return assistants.find((item) => item.user.id === userId) || null;
+  }
+
+  async getConversationAssistant(conversationId) {
+    const [assistants, conversations] = await Promise.all([
+      this.getAssistantUsers(),
+      this.store.read(CONVERSATIONS),
+    ]);
+    const conversation = conversations.find((item) => item.id === conversationId);
+    if (!conversation || !Array.isArray(conversation.memberIds)) {
+      return null;
+    }
+
+    if (conversation.type === 'group') {
+      const deepseek = assistants.find((assistant) => (
+        assistant.kind === 'deepseek'
+        && conversation.memberIds.includes(assistant.user.id)
+      ));
+      if (deepseek) {
+        return deepseek;
+      }
+      return assistants.find((assistant) => conversation.memberIds.includes(assistant.user.id)) || null;
+    }
+
+    return assistants.find((assistant) => conversation.memberIds.includes(assistant.user.id)) || null;
   }
 
   isAgentTokenValid(token) {
@@ -568,15 +633,8 @@ export class AiService {
       return conversation;
     }
 
-    const assistant = await this.getAssistantUser();
-    const isAssistantConversation = Boolean(
-      conversation.isAssistant
-      || (
-        conversation.type === 'direct'
-        && Array.isArray(conversation.memberIds)
-        && conversation.memberIds.includes(assistant.id)
-      ),
-    );
+    const assistant = await this.getConversationAssistant(conversation.id);
+    const isAssistantConversation = Boolean(assistant);
 
     if (!isAssistantConversation) {
       return {
@@ -588,7 +646,8 @@ export class AiService {
     return {
       ...conversation,
       isAssistant: true,
-      agentOnline: this.isAgentOnline(),
+      assistantKind: assistant.kind,
+      agentOnline: assistant.kind === 'codex' ? this.isAgentOnline() : false,
     };
   }
 
@@ -596,28 +655,34 @@ export class AiService {
     return Promise.all((conversations ?? []).map((conversation) => this.decorateConversation(conversation)));
   }
 
-  async ensureAssistantConversation(actor) {
+  async ensureAssistantConversation(actor, kind = 'codex') {
     assert(actor?.isAdmin, 403, 'Only admins can use the assistant.');
-    const assistant = await this.getAssistantUser();
+    const assistant = await this.getAssistantUser(kind);
     const conversation = await this.chatService.createDirectConversation(actor.id, assistant.id);
     return this.decorateConversation(conversation);
   }
 
+  async ensureAssistantConversations(actor) {
+    assert(actor?.isAdmin, 403, 'Only admins can use the assistant.');
+    const assistants = await this.getAssistantUsers();
+    await this.migrateLegacyGroupAssistantMemberships(assistants);
+    const conversations = [];
+    for (const assistant of assistants) {
+      conversations.push(await this.ensureAssistantConversation(actor, assistant.kind));
+    }
+    return conversations;
+  }
+
   async isAssistantConversationId(conversationId) {
-    const assistant = await this.getAssistantUser();
-    const conversations = await this.store.read(CONVERSATIONS);
-    return conversations.some((conversation) => (
-      conversation.id === conversationId
-      && Array.isArray(conversation.memberIds)
-      && conversation.memberIds.includes(assistant.id)
-    ));
+    return Boolean(await this.getConversationAssistant(conversationId));
   }
 
   async enqueueConversationRun({ actorUserId, conversationId, triggerMessageId }) {
-    const assistant = await this.getAssistantUser();
+    const assistant = await this.getConversationAssistant(conversationId);
+    assert(assistant, 404, 'Assistant conversation not found.');
     const run = {
       id: `run_${randomUUID()}`,
-      assistantUserId: assistant.id,
+      assistantUserId: assistant.user.id,
       requestedBy: actorUserId,
       conversationId,
       triggerMessageId,
@@ -664,7 +729,10 @@ export class AiService {
     }));
 
     try {
-      if (String(this.config.aiExecutionMode || 'server_ai').toLowerCase() === 'local_codex') {
+      const assistant = await this.getAssistantProfileByUserId(run.assistantUserId);
+      const executionMode = String(assistant?.executionMode || this.config.aiExecutionMode || 'server_ai').toLowerCase();
+
+      if (executionMode === 'local_codex') {
         await this.processLocalCodexRun(runId, run);
         return;
       }
@@ -673,6 +741,7 @@ export class AiService {
         const message = await this.postAssistantText(
           run.conversationId,
           'AI API key 未配置，当前无法执行 AI 指令。',
+          run.assistantUserId,
         );
         await this.finishRun(runId, {
           status: 'completed',
@@ -683,7 +752,7 @@ export class AiService {
 
       const contextMessages = await this.buildRunContext(run);
       let response = await this.aiClient.start({
-        systemPrompt: buildSystemPrompt(),
+        systemPrompt: buildSystemPrompt(assistant?.nickname || assistant?.user?.nickname || 'AI'),
         messages: contextMessages,
         tools: TOOL_DEFINITIONS,
       });
@@ -697,11 +766,11 @@ export class AiService {
           const finalText = normalizeAssistantText(this.aiClient.getText(response));
 
           for (const image of pendingImages) {
-            const sentImage = await this.postAssistantImage(run.conversationId, image);
+            const sentImage = await this.postAssistantImage(run.conversationId, image, run.assistantUserId);
             responseMessageIds.push(sentImage.id);
           }
 
-          const finalMessage = await this.postAssistantText(run.conversationId, finalText);
+          const finalMessage = await this.postAssistantText(run.conversationId, finalText, run.assistantUserId);
           responseMessageIds.push(finalMessage.id);
           await this.finishRun(runId, {
             status: 'completed',
@@ -728,6 +797,7 @@ export class AiService {
       const timeoutMessage = await this.postAssistantText(
         run.conversationId,
         '这次执行超时了。请把指令拆成更具体的一步再试。',
+        run.assistantUserId,
       );
       await this.finishRun(runId, {
         status: 'completed',
@@ -737,6 +807,7 @@ export class AiService {
       const fallbackMessage = await this.postAssistantText(
         run.conversationId,
         `执行失败：${toUserFacingErrorMessage(error)}。`,
+        run.assistantUserId,
       );
       await this.finishRun(runId, {
         status: 'failed',
@@ -764,7 +835,7 @@ export class AiService {
 
     const responseMessageIds = [];
     if (relayResult.type === 'image' && relayResult.imageUrl) {
-      const sentImage = await this.postAssistantImage(run.conversationId, relayResult);
+      const sentImage = await this.postAssistantImage(run.conversationId, relayResult, run.assistantUserId);
       responseMessageIds.push(sentImage.id);
     }
 
@@ -772,7 +843,7 @@ export class AiService {
     const finalText = relayResult.error
       ? `${relayLabel}\n\u6267\u884c\u5931\u8d25\uff1a${relayResult.error}\u3002`
       : `${relayLabel}\n${normalizeAssistantText(relayResult.text)}`;
-    const finalMessage = await this.postAssistantText(run.conversationId, finalText);
+    const finalMessage = await this.postAssistantText(run.conversationId, finalText, run.assistantUserId);
     responseMessageIds.push(finalMessage.id);
 
     await this.finishRun(runId, {
@@ -791,7 +862,10 @@ export class AiService {
   }
 
   async buildRunContext(run) {
-    const assistant = await this.getAssistantUser();
+    const conversationAssistant = await this.getConversationAssistant(run.conversationId);
+    const assistant = run.assistantUserId
+      ? await this.authService.getUserById(run.assistantUserId)
+      : conversationAssistant?.user;
     const conversations = await this.store.read(CONVERSATIONS);
     const conversation = conversations.find((item) => item.id === run.conversationId) ?? null;
     const isGroupConversation = conversation?.type === 'group';
@@ -822,8 +896,8 @@ export class AiService {
 
         const body = textParts.join('\n\n').trim() || '[Empty message]';
         return {
-          role: message.senderId === assistant.id ? 'assistant' : 'user',
-          text: isGroupConversation && message.senderId !== assistant.id
+          role: assistant && message.senderId === assistant.id ? 'assistant' : 'user',
+          text: isGroupConversation && message.senderId !== assistant?.id
             ? `${senderName}: ${body}`
             : body,
         };
@@ -1084,8 +1158,39 @@ export class AiService {
     }
   }
 
+  async migrateLegacyGroupAssistantMemberships(assistants = null) {
+    const assistantProfiles = assistants || await this.getAssistantUsers();
+    const codex = assistantProfiles.find((assistant) => assistant.kind === 'codex');
+    const deepseek = assistantProfiles.find((assistant) => assistant.kind === 'deepseek');
+    if (!codex || !deepseek) {
+      return;
+    }
+
+    await this.store.mutate(CONVERSATIONS, (conversations) => conversations.map((conversation) => {
+      if (
+        conversation.type !== 'group'
+        || !Array.isArray(conversation.memberIds)
+        || !conversation.memberIds.includes(codex.user.id)
+        || conversation.memberIds.includes(deepseek.user.id)
+      ) {
+        return conversation;
+      }
+
+      return {
+        ...conversation,
+        memberIds: conversation.memberIds.map((memberId) => (
+          memberId === codex.user.id ? deepseek.user.id : memberId
+        )),
+        updatedAt: new Date().toISOString(),
+      };
+    }));
+  }
+
   async broadcastAssistantPresenceChange() {
-    const assistant = await this.getAssistantUser();
+    const assistant = await this.getAssistantUser('codex');
+    if (!assistant) {
+      return;
+    }
     const conversations = await this.store.read(CONVERSATIONS);
     const targets = conversations.filter((conversation) => (
       conversation.type === 'direct'
@@ -1110,8 +1215,8 @@ export class AiService {
     }
   }
 
-  async postAssistantText(conversationId, text) {
-    const assistant = await this.getAssistantUser();
+  async postAssistantText(conversationId, text, assistantUserId) {
+    const assistant = await this.authService.getUserById(assistantUserId);
     const result = await this.chatService.sendMessage(assistant.id, conversationId, {
       type: 'text',
       text,
@@ -1123,8 +1228,8 @@ export class AiService {
     return result.message;
   }
 
-  async postAssistantImage(conversationId, imageResult) {
-    const assistant = await this.getAssistantUser();
+  async postAssistantImage(conversationId, imageResult, assistantUserId) {
+    const assistant = await this.authService.getUserById(assistantUserId);
     const result = await this.chatService.sendMessage(assistant.id, conversationId, {
       type: 'image',
       imageUrl: imageResult.imageUrl,

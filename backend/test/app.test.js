@@ -439,7 +439,7 @@ test('admin can create an assistant conversation and get an offline-agent reply'
 
   await authService.ensureSeedAdmin();
   const admin = await authService.getUserById('user_admin');
-  const conversation = await aiService.ensureAssistantConversation(admin);
+  const conversation = await aiService.ensureAssistantConversation(admin, 'codex');
   assert.equal(conversation.isAssistant, true);
   assert.equal(conversation.agentOnline, false);
 
@@ -458,6 +458,52 @@ test('admin can create an assistant conversation and get an offline-agent reply'
   const assistantReply = messages.at(-1);
   assert.equal(assistantReply.sender.isAssistant, true);
   assert.match(assistantReply.text, /本地 agent 未连接/);
+
+  await rm(dataDir, { recursive: true, force: true });
+});
+
+test('admin can see separate Codex and DeepSeek assistant accounts', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
+  const store = new JsonStore(dataDir);
+  const sessionService = new SessionService('test-secret');
+  const authService = new AuthService(store, sessionService);
+  const socialService = new SocialService(store);
+  const chatService = new ChatService(store);
+  const aiService = new AiService({
+    store,
+    authService,
+    chatService,
+    realtimeHub: {
+      broadcastUsers() {},
+    },
+    config: {
+      openaiApiKey: 'test-key',
+      openaiModel: 'gpt-test',
+      codexAssistantAccount: 'codex',
+      codexAssistantNickname: 'Codex',
+      deepseekAssistantAccount: 'deepseek',
+      deepseekAssistantNickname: 'DeepSeek',
+      aiAgentToken: 'agent-token',
+    },
+  });
+
+  await authService.ensureSeedAdmin();
+  const admin = await authService.getUserById('user_admin');
+  const conversations = await aiService.ensureAssistantConversations(admin);
+  const contacts = await socialService.listContacts(admin.id);
+
+  assert.equal(conversations.length, 2);
+  assert.deepEqual(
+    conversations.map((conversation) => conversation.assistantKind).sort(),
+    ['codex', 'deepseek'],
+  );
+  assert.deepEqual(
+    contacts
+      .filter((user) => user.isAssistant)
+      .map((user) => `${user.assistantKind}:${user.nickname}`)
+      .sort(),
+    ['codex:Codex', 'deepseek:DeepSeek'],
+  );
 
   await rm(dataDir, { recursive: true, force: true });
 });
@@ -508,7 +554,7 @@ test('assistant runs stay serialized per conversation', async () => {
 
   await authService.ensureSeedAdmin();
   const admin = await authService.getUserById('user_admin');
-  const conversation = await aiService.ensureAssistantConversation(admin);
+  const conversation = await aiService.ensureAssistantConversation(admin, 'deepseek');
 
   const first = await chatService.sendMessage(admin.id, conversation.id, {
     type: 'text',
@@ -589,7 +635,7 @@ test('assistant prompt prefers direct execution and final replies are normalized
 
   await authService.ensureSeedAdmin();
   const admin = await authService.getUserById('user_admin');
-  const conversation = await aiService.ensureAssistantConversation(admin);
+  const conversation = await aiService.ensureAssistantConversation(admin, 'deepseek');
   const sent = await chatService.sendMessage(admin.id, conversation.id, {
     type: 'text',
     text: 'say hi',
@@ -641,7 +687,7 @@ test('assistant provider failures become short user-facing errors', async () => 
 
   await authService.ensureSeedAdmin();
   const admin = await authService.getUserById('user_admin');
-  const conversation = await aiService.ensureAssistantConversation(admin);
+  const conversation = await aiService.ensureAssistantConversation(admin, 'deepseek');
   const sent = await chatService.sendMessage(admin.id, conversation.id, {
     type: 'text',
     text: 'run it',
@@ -701,7 +747,7 @@ test('assistant can relay a task to local codex mode without calling provider AI
 
   await authService.ensureSeedAdmin();
   const admin = await authService.getUserById('user_admin');
-  const conversation = await aiService.ensureAssistantConversation(admin);
+  const conversation = await aiService.ensureAssistantConversation(admin, 'codex');
   const sent = await chatService.sendMessage(admin.id, conversation.id, {
     type: 'text',
     text: '列出当前项目根目录文件',
@@ -833,10 +879,7 @@ test('assistant account can be added to groups without friendship and group cont
     nickname: 'Carol',
     password: 'password123',
   });
-  const assistant = await authService.ensureAssistantUser({
-    account: 'codex',
-    nickname: 'AI 助手',
-  });
+  const assistant = await aiService.getAssistantUser('deepseek');
 
   await socialService.addFriend(admin.id, { userId: bob.user.id });
   await socialService.addFriend(admin.id, { userId: carol.user.id });

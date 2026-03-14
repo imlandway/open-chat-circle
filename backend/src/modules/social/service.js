@@ -22,6 +22,7 @@ function toSafeUser(user) {
     createdAt: user.createdAt,
     isAdmin: Boolean(user.isAdmin),
     isAssistant: Boolean(user.isAssistant),
+    assistantKind: user.assistantKind || '',
   };
 }
 
@@ -35,17 +36,16 @@ export class SocialService {
       this.store.read(USERS),
       this.store.read(FRIENDSHIPS),
     ]);
+    const actor = users.find((user) => user.id === currentUserId);
     const contactIds = this.getFriendIds(friendships, currentUserId);
+    const assistantIds = actor?.isAdmin
+      ? users.filter((user) => user.isAssistant && user.status === 'active').map((user) => user.id)
+      : [];
+    const visibleIds = new Set([...contactIds, ...assistantIds]);
 
     return users
-      .filter((user) => contactIds.has(user.id) && user.status === 'active')
-      .map((user) => ({
-        id: user.id,
-        account: user.account,
-        nickname: user.nickname,
-        avatarUrl: user.avatarUrl,
-        status: user.status,
-      }));
+      .filter((user) => visibleIds.has(user.id) && user.status === 'active')
+      .map((user) => toSafeUser(user));
   }
 
   async listDiscoverableUsers(currentUserId, query = '') {
