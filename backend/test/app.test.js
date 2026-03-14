@@ -589,7 +589,7 @@ test('assistant runs stay serialized per conversation', async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test('assistant prompt prefers direct execution and final replies are normalized', async () => {
+test('deepseek assistant uses chat prompt and final replies are normalized', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
   const store = new JsonStore(dataDir);
   const sessionService = new SessionService('test-secret');
@@ -648,11 +648,63 @@ test('assistant prompt prefers direct execution and final replies are normalized
   await aiService.waitForConversationIdle(conversation.id);
 
   const systemPrompt = firstPayload.input[0].content[0].text;
-  assert.match(systemPrompt, /Default to action, not discussion/);
-  assert.match(systemPrompt, /Do not write filler/);
+  assert.match(systemPrompt, /normal conversation and group discussion/);
+  assert.match(systemPrompt, /Do not claim you can control the user's Windows computer/);
 
   const messages = await chatService.listMessages(admin.id, conversation.id);
   assert.equal(messages.at(-1).text, 'done\n\nnext');
+
+  await rm(dataDir, { recursive: true, force: true });
+});
+
+test('codex assistant replies to small talk without starting a relay job', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
+  const store = new JsonStore(dataDir);
+  const sessionService = new SessionService('test-secret');
+  const authService = new AuthService(store, sessionService);
+  const chatService = new ChatService(store);
+  const aiService = new AiService({
+    store,
+    authService,
+    chatService,
+    realtimeHub: {
+      broadcastUsers() {},
+    },
+    config: {
+      aiExecutionMode: 'local_codex',
+      openaiApiKey: '',
+      openaiModel: 'gpt-test',
+      aiAgentToken: 'agent-token',
+    },
+  });
+
+  let relayCalled = false;
+  aiService.requestAgentJob = async () => {
+    relayCalled = true;
+    return {
+      type: 'text',
+      text: 'should not happen',
+      error: '',
+    };
+  };
+
+  await authService.ensureSeedAdmin();
+  const admin = await authService.getUserById('user_admin');
+  const conversation = await aiService.ensureAssistantConversation(admin, 'codex');
+  const sent = await chatService.sendMessage(admin.id, conversation.id, {
+    type: 'text',
+    text: '嘿',
+  });
+  await aiService.enqueueConversationRun({
+    actorUserId: admin.id,
+    conversationId: conversation.id,
+    triggerMessageId: sent.message.id,
+  });
+  await aiService.waitForConversationIdle(conversation.id);
+
+  const messages = await chatService.listMessages(admin.id, conversation.id);
+  assert.equal(relayCalled, false);
+  assert.equal(messages.at(-1).text, '我在。直接告诉我你想让我做什么。');
 
   await rm(dataDir, { recursive: true, force: true });
 });

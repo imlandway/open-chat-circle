@@ -168,7 +168,7 @@ function parseToolArguments(rawArguments) {
   }
 }
 
-function buildSystemPrompt(assistantName = 'Codex') {
+function buildLocalAgentPrompt(assistantName = 'Codex') {
   return [
     `You are ${assistantName} inside Open Chat Circle.`,
     'You are helping the admin operate their own Windows computer through a trusted local agent.',
@@ -184,6 +184,26 @@ function buildSystemPrompt(assistantName = 'Codex') {
     'If the user only says hello, reply briefly and invite one concrete task.',
     'If you receive a screenshot tool result, summarize only the useful visible details before continuing.',
   ].join(' ');
+}
+
+function buildCloudAssistantPrompt(assistantName = 'DeepSeek') {
+  return [
+    `You are ${assistantName} inside Open Chat Circle.`,
+    'You are a concise, helpful chat assistant for normal conversation and group discussion.',
+    'Do not claim you can control the user\'s Windows computer, local files, browser, or terminal.',
+    'Do not mention tools, agents, PowerShell, or local automation unless the user explicitly asks about product capabilities.',
+    'Reply naturally, directly, and briefly.',
+    'If the user just greets you, greet them back in one short sentence.',
+  ].join(' ');
+}
+
+function isSmallTalkInstruction(text) {
+  const normalized = String(text || '').trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+
+  return /^(嘿|嗨|哈喽|hello|hi|hey|在吗|在么|你好|yo|喂)$/i.test(normalized);
 }
 
 function normalizeAssistantText(text) {
@@ -751,10 +771,14 @@ export class AiService {
       }
 
       const contextMessages = await this.buildRunContext(run);
+      const prompt = assistant?.kind === 'deepseek'
+        ? buildCloudAssistantPrompt(assistant?.nickname || assistant?.user?.nickname || 'DeepSeek')
+        : buildLocalAgentPrompt(assistant?.nickname || assistant?.user?.nickname || 'Codex');
+      const selectedTools = assistant?.kind === 'deepseek' ? [] : TOOL_DEFINITIONS;
       let response = await this.aiClient.start({
-        systemPrompt: buildSystemPrompt(assistant?.nickname || assistant?.user?.nickname || 'AI'),
+        systemPrompt: prompt,
         messages: contextMessages,
-        tools: TOOL_DEFINITIONS,
+        tools: selectedTools,
       });
 
       const responseMessageIds = [];
@@ -791,7 +815,7 @@ export class AiService {
           });
         }
 
-        response = await this.aiClient.continue(response, toolOutputs, TOOL_DEFINITIONS);
+        response = await this.aiClient.continue(response, toolOutputs, selectedTools);
       }
 
       const timeoutMessage = await this.postAssistantText(
@@ -820,6 +844,19 @@ export class AiService {
   async processLocalCodexRun(runId, run) {
     const contextMessages = await this.buildRunContext(run);
     const instruction = this.extractRelayInstruction(contextMessages);
+    if (isSmallTalkInstruction(instruction)) {
+      const message = await this.postAssistantText(
+        run.conversationId,
+        '我在。直接告诉我你想让我做什么。',
+        run.assistantUserId,
+      );
+      await this.finishRun(runId, {
+        status: 'completed',
+        responseMessageIds: [message.id],
+      });
+      return;
+    }
+
     const relayResult = await this.requestAgentJob({
       runId: run.id,
       conversationId: run.conversationId,
