@@ -659,6 +659,71 @@ test('assistant provider failures become short user-facing errors', async () => 
   await rm(dataDir, { recursive: true, force: true });
 });
 
+test('assistant can relay a task to local codex mode without calling provider AI', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
+  const store = new JsonStore(dataDir);
+  const sessionService = new SessionService('test-secret');
+  const authService = new AuthService(store, sessionService);
+  const chatService = new ChatService(store);
+
+  const aiService = new AiService({
+    store,
+    authService,
+    chatService,
+    realtimeHub: {
+      broadcastUsers() {},
+    },
+    config: {
+      aiExecutionMode: 'local_codex',
+      openaiApiKey: '',
+      openaiModel: 'gpt-test',
+      aiAssistantAccount: 'codex',
+      aiAssistantNickname: 'AI 助手',
+      aiAgentToken: 'agent-token',
+      aiRelayCwd: 'C:\\Users\\asus\\Desktop\\聊天app',
+    },
+    openaiClient: {
+      async createResponse() {
+        throw new Error('provider should not be called in local_codex mode');
+      },
+    },
+  });
+
+  let capturedJob = null;
+  aiService.requestAgentJob = async (payload) => {
+    capturedJob = payload;
+    return {
+      type: 'text',
+      text: 'Codex relay result',
+      error: '',
+    };
+  };
+
+  await authService.ensureSeedAdmin();
+  const admin = await authService.getUserById('user_admin');
+  const conversation = await aiService.ensureAssistantConversation(admin);
+  const sent = await chatService.sendMessage(admin.id, conversation.id, {
+    type: 'text',
+    text: '列出当前项目根目录文件',
+  });
+  await aiService.enqueueConversationRun({
+    actorUserId: admin.id,
+    conversationId: conversation.id,
+    triggerMessageId: sent.message.id,
+  });
+  await aiService.waitForConversationIdle(conversation.id);
+
+  assert.equal(capturedJob.toolName, 'codex_run');
+  assert.equal(capturedJob.requiresApproval, false);
+  assert.equal(capturedJob.argumentsPayload.instruction, '列出当前项目根目录文件');
+  assert.equal(capturedJob.argumentsPayload.cwd, 'C:\\Users\\asus\\Desktop\\聊天app');
+
+  const messages = await chatService.listMessages(admin.id, conversation.id);
+  assert.equal(messages.at(-1).text, 'Codex relay result');
+
+  await rm(dataDir, { recursive: true, force: true });
+});
+
 test('assistant agent jobs no longer require local approval', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
   const store = new JsonStore(dataDir);

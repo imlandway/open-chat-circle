@@ -11,6 +11,8 @@ export const config = {
   storeDriver: process.env.STORE_DRIVER ?? 'json',
   databaseUrl: process.env.DATABASE_URL ?? '',
   aiProvider: process.env.AI_PROVIDER ?? (process.env.DEEPSEEK_API_KEY ? 'deepseek' : 'openai'),
+  aiExecutionMode: process.env.AI_EXECUTION_MODE ?? 'server_ai',
+  aiRelayCwd: process.env.AI_RELAY_CWD ?? '',
   aiApiKey: process.env.AI_API_KEY ?? process.env.DEEPSEEK_API_KEY ?? process.env.OPENAI_API_KEY ?? '',
   aiBaseUrl: process.env.AI_BASE_URL ?? '',
   aiModel: process.env.AI_MODEL ?? process.env.OPENAI_MODEL ?? '',

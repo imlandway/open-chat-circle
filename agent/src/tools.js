@@ -8,6 +8,43 @@ import { join } from 'node:path';
 const execFileAsync = promisify(execFile);
 const TEXT_FILE_BYTES_LIMIT = 200_000;
 
+function buildCodexRelayPrompt({ instruction, history, cwd }) {
+  const recentHistory = Array.isArray(history)
+    ? history
+      .slice(-12)
+      .map((message) => {
+        const role = message?.role === 'assistant' ? 'assistant' : 'user';
+        return `${role}: ${String(message?.text || '').trim()}`;
+      })
+      .filter(Boolean)
+      .join('\n\n')
+    : '';
+
+  return [
+    'You are the Codex relay worker for Open Chat Circle.',
+    'Treat the latest user message as the task to execute on the local machine.',
+    'Reply in concise Chinese.',
+    'If you changed files, mention the key files.',
+    'If you ran commands, summarize the key result.',
+    cwd ? `Working directory: ${cwd}` : '',
+    recentHistory ? `Recent chat context:\n${recentHistory}` : '',
+    `Current instruction:\n${String(instruction || '').trim() || 'Please handle the current request directly.'}`,
+  ].filter(Boolean).join('\n\n');
+}
+
+function toCodexCliErrorMessage(error, executable) {
+  const message = String(error?.message || '').trim();
+  if (error?.code === 'ENOENT' || /not recognized|cannot find/i.test(message)) {
+    return `Codex CLI 未找到。请检查 CHAT_AGENT_CODEX_EXECUTABLE，当前值是 ${executable}。`;
+  }
+
+  if (error?.code === 'EACCES' || /access is denied/i.test(message)) {
+    return `Codex CLI 无法启动。请把 CHAT_AGENT_CODEX_EXECUTABLE 改成一个当前用户可执行的 Codex 命令。`;
+  }
+
+  return message || 'Codex relay 执行失败。';
+}
+
 function ensureInsideAllowedRoots(targetPath, allowedRoots) {
   const resolved = resolve(targetPath);
   const allowed = allowedRoots.some((root) => {
@@ -52,7 +89,41 @@ async function walkDirectory(rootPath, visit) {
 }
 
 export function createToolRunner({ config, browser, uploadImage }) {
-  return {
+  const tools = {
+    async codex_run(args = {}) {
+      const cwd = resolveInputPath(args.cwd, config);
+      const prompt = buildCodexRelayPrompt({
+        instruction: args.instruction,
+        history: args.history,
+        cwd,
+      });
+
+      try {
+        const { stdout, stderr } = await execFileAsync(
+          config.codexExecutable,
+          ['exec', '--ask-for-approval', 'never', '--model', config.codexModel, prompt],
+          {
+            cwd,
+            timeout: 1000 * 60 * 10,
+            maxBuffer: 1024 * 1024 * 16,
+            windowsHide: false,
+          },
+        );
+
+        return {
+          type: 'text',
+          text: [stdout, stderr].filter(Boolean).join('\n').trim() || 'Codex relay 已处理完成。',
+          metadata: {
+            cwd,
+            executable: config.codexExecutable,
+            model: config.codexModel,
+          },
+        };
+      } catch (error) {
+        throw new Error(toCodexCliErrorMessage(error, config.codexExecutable));
+      }
+    },
+
     async fs_list(args = {}) {
       const targetPath = resolveInputPath(args.path, config);
       const entries = await readdir(targetPath, { withFileTypes: true });
@@ -228,4 +299,6 @@ export function createToolRunner({ config, browser, uploadImage }) {
       };
     },
   };
+
+  return tools;
 }

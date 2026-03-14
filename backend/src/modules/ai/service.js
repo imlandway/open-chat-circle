@@ -7,6 +7,7 @@ const AGENT_SESSIONS = 'agentSessions';
 const CONVERSATIONS = 'conversations';
 
 const TOOL_APPROVALS = {
+  codex_run: false,
   fs_list: false,
   fs_read: false,
   fs_search: false,
@@ -663,6 +664,11 @@ export class AiService {
     }));
 
     try {
+      if (String(this.config.aiExecutionMode || 'server_ai').toLowerCase() === 'local_codex') {
+        await this.processLocalCodexRun(runId, run);
+        return;
+      }
+
       if (!this.config.aiApiKey && !this.config.openaiApiKey) {
         const message = await this.postAssistantText(
           run.conversationId,
@@ -738,6 +744,49 @@ export class AiService {
         responseMessageIds: [fallbackMessage.id],
       });
     }
+  }
+
+  async processLocalCodexRun(runId, run) {
+    const contextMessages = await this.buildRunContext(run);
+    const instruction = this.extractRelayInstruction(contextMessages);
+    const relayResult = await this.requestAgentJob({
+      runId: run.id,
+      conversationId: run.conversationId,
+      toolName: 'codex_run',
+      argumentsPayload: {
+        instruction,
+        history: contextMessages.slice(-12),
+        cwd: this.config.aiRelayCwd || '',
+      },
+      callId: `codex_run_${run.id}`,
+      requiresApproval: false,
+    });
+
+    const responseMessageIds = [];
+    if (relayResult.type === 'image' && relayResult.imageUrl) {
+      const sentImage = await this.postAssistantImage(run.conversationId, relayResult);
+      responseMessageIds.push(sentImage.id);
+    }
+
+    const finalText = relayResult.error
+      ? `\u6267\u884c\u5931\u8d25\uff1a${relayResult.error}\u3002`
+      : normalizeAssistantText(relayResult.text);
+    const finalMessage = await this.postAssistantText(run.conversationId, finalText);
+    responseMessageIds.push(finalMessage.id);
+
+    await this.finishRun(runId, {
+      status: relayResult.error ? 'failed' : 'completed',
+      error: relayResult.error || '',
+      responseMessageIds,
+    });
+  }
+
+  extractRelayInstruction(contextMessages) {
+    const latestUserMessage = [...(contextMessages || [])]
+      .reverse()
+      .find((message) => message?.role === 'user' && String(message.text || '').trim());
+
+    return String(latestUserMessage?.text || '').trim() || '\u8bf7\u76f4\u63a5\u5904\u7406\u5f53\u524d\u8bf7\u6c42\u3002';
   }
 
   async buildRunContext(run) {

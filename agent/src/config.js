@@ -13,6 +13,8 @@ export const config = {
   defaultProjectRoot: resolve(process.env.CHAT_AGENT_DEFAULT_PROJECT_ROOT || process.cwd()),
   allowedRoots: [],
   headless: String(process.env.CHAT_AGENT_HEADLESS || 'false').toLowerCase() === 'true',
+  codexExecutable: process.env.CHAT_AGENT_CODEX_EXECUTABLE || 'codex',
+  codexModel: process.env.CHAT_AGENT_CODEX_MODEL || 'gpt-5.4',
 };
 
 config.allowedRoots = Array.from(new Set([
