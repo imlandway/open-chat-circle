@@ -1,5 +1,5 @@
-import { execFile } from 'node:child_process';
-import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { execFile, spawn } from 'node:child_process';
+import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -8,32 +8,101 @@ import { join } from 'node:path';
 const execFileAsync = promisify(execFile);
 const TEXT_FILE_BYTES_LIMIT = 200_000;
 
+function runSpawnedProcess(command, args, { cwd, timeoutMs, input = '' }) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      windowsHide: false,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+
+    const finish = (error, result = null) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(result);
+    };
+
+    const timeout = setTimeout(() => {
+      child.kill();
+      const error = new Error(`Command timed out after ${timeoutMs}ms`);
+      error.code = 'ETIMEDOUT';
+      finish(error);
+    }, timeoutMs);
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on('error', (error) => {
+      finish(error);
+    });
+
+    child.on('close', (code) => {
+      if (code && code !== 0) {
+        const error = new Error(stderr || stdout || `Command failed with exit code ${code}`);
+        error.code = code;
+        error.stdout = stdout;
+        error.stderr = stderr;
+        finish(error);
+        return;
+      }
+
+      finish(null, {
+        stdout,
+        stderr,
+      });
+    });
+
+    if (input) {
+      child.stdin.write(input);
+    }
+    child.stdin.end();
+  });
+}
+
 function getNpxExecutable() {
   return process.platform === 'win32' ? 'npx.cmd' : 'npx';
 }
 
 function buildCodexRelayPrompt({ instruction, history, cwd }) {
-  const recentHistory = Array.isArray(history)
+  const recentUserHistory = Array.isArray(history)
     ? history
       .slice(-12)
       .map((message) => {
         const role = message?.role === 'assistant' ? 'assistant' : 'user';
-        return `${role}: ${String(message?.text || '').trim()}`;
+        return {
+          role,
+          text: String(message?.text || '').trim(),
+        };
       })
-      .filter(Boolean)
+      .filter((message) => message.role === 'user' && message.text)
+      .slice(-4, -1)
+      .map((message) => message.text)
       .join('\n\n')
     : '';
 
   return [
-    'You are the Codex relay worker for Open Chat Circle.',
-    'Treat the latest user message as the task to execute on the local machine.',
-    'Reply in concise Chinese.',
-    'If you changed files, mention the key files.',
-    'If you ran commands, summarize the key result.',
-    cwd ? `Working directory: ${cwd}` : '',
-    recentHistory ? `Recent chat context:\n${recentHistory}` : '',
-    `Current instruction:\n${String(instruction || '').trim() || 'Please handle the current request directly.'}`,
-  ].filter(Boolean).join('\n\n');
+    `任务：${String(instruction || '').trim() || '请直接处理当前请求。'}`,
+    cwd ? `工作目录：${cwd}` : '',
+    recentUserHistory ? `补充上下文：${recentUserHistory.replace(/\s+/g, ' ').trim()}` : '',
+    '要求：直接开始执行，不要自我介绍，不要复述题目，不要让用户再发一次任务，默认用中文回复。',
+    '结果格式：只输出结果摘要；如果改了文件，列出关键文件；如果跑了命令，概括关键结果。',
+  ].filter(Boolean).join(' | ');
 }
 
 function toCodexCliErrorMessage(error, executable) {
@@ -50,29 +119,79 @@ function toCodexCliErrorMessage(error, executable) {
 }
 
 async function runCodexExec({ executable, model, prompt, cwd }) {
-  return execFileAsync(
-    executable,
-    ['exec', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '--model', model, prompt],
-    {
-      cwd,
-      timeout: 1000 * 60 * 10,
-      maxBuffer: 1024 * 1024 * 16,
-      windowsHide: false,
-    },
-  );
+  const outputPath = join(tmpdir(), `codex-relay-output-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
+
+  try {
+    const result = await runSpawnedProcess(
+      executable,
+      [
+        'exec',
+        '--dangerously-bypass-approvals-and-sandbox',
+        '--skip-git-repo-check',
+        '--color',
+        'never',
+        '--model',
+        model,
+        '--output-last-message',
+        outputPath,
+        prompt,
+      ],
+      {
+        cwd,
+        timeoutMs: 1000 * 60 * 10,
+      },
+    );
+
+    const combinedOutput = [result.stdout, result.stderr].filter(Boolean).join('\n');
+    const lastMessage = await readOutputFile(outputPath) || extractCodexLastMessage(combinedOutput);
+    return {
+      stdout: lastMessage || result.stdout,
+      stderr: lastMessage ? '' : result.stderr,
+    };
+  } finally {
+    await removeFileQuietly(outputPath);
+  }
 }
 
 async function runCodexViaNpx({ model, prompt, cwd }) {
-  return execFileAsync(
-    process.env.ComSpec || 'cmd.exe',
-    ['/d', '/s', '/c', getNpxExecutable(), '--yes', '@openai/codex', 'exec', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '--model', model, prompt],
-    {
-      cwd,
-      timeout: 1000 * 60 * 10,
-      maxBuffer: 1024 * 1024 * 16,
-      windowsHide: false,
-    },
-  );
+  const outputPath = join(tmpdir(), `codex-relay-output-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
+
+  try {
+    const result = await runSpawnedProcess(
+      process.env.ComSpec || 'cmd.exe',
+      [
+        '/d',
+        '/s',
+        '/c',
+        getNpxExecutable(),
+        '--yes',
+        '@openai/codex',
+        'exec',
+        '--dangerously-bypass-approvals-and-sandbox',
+        '--skip-git-repo-check',
+        '--color',
+        'never',
+        '--model',
+        model,
+        '--output-last-message',
+        outputPath,
+        prompt,
+      ],
+      {
+        cwd,
+        timeoutMs: 1000 * 60 * 10,
+      },
+    );
+
+    const combinedOutput = [result.stdout, result.stderr].filter(Boolean).join('\n');
+    const lastMessage = await readOutputFile(outputPath) || extractCodexLastMessage(combinedOutput);
+    return {
+      stdout: lastMessage || result.stdout,
+      stderr: lastMessage ? '' : result.stderr,
+    };
+  } finally {
+    await removeFileQuietly(outputPath);
+  }
 }
 
 async function runCodexWithFallback({ executable, model, prompt, cwd }) {
@@ -98,6 +217,44 @@ async function runCodexWithFallback({ executable, model, prompt, cwd }) {
       ...result,
       resolvedExecutable: `${getNpxExecutable()} @openai/codex`,
     };
+  }
+}
+
+async function readOutputFile(filePath) {
+  try {
+    const raw = await readFile(filePath, 'utf8');
+    return String(raw || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function extractCodexLastMessage(rawText) {
+  const normalized = String(rawText || '').replace(/\r/g, '').trim();
+  if (!normalized) {
+    return '';
+  }
+
+  const codexMarker = '\ncodex\n';
+  const markerIndex = normalized.lastIndexOf(codexMarker);
+  if (markerIndex >= 0) {
+    return normalized
+      .slice(markerIndex + codexMarker.length)
+      .replace(/\ntokens used[\s\S]*$/i, '')
+      .trim();
+  }
+
+  return normalized
+    .replace(/^OpenAI Codex[\s\S]*?\nuser\n/si, '')
+    .replace(/\ntokens used[\s\S]*$/i, '')
+    .trim();
+}
+
+async function removeFileQuietly(filePath) {
+  try {
+    await unlink(filePath);
+  } catch {
+    // Ignore missing temp files.
   }
 }
 
