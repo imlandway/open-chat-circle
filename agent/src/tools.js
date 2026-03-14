@@ -86,7 +86,7 @@ async function runCodexWithFallback({ executable, model, prompt, cwd }) {
     const message = String(error?.message || '').trim();
     const shouldFallbackToNpx = (
       executable === 'codex'
-      && (error?.code === 'ENOENT' || error?.code === 'EACCES' || /not recognized|cannot find|access is denied/i.test(message))
+      && (error?.code === 'ENOENT' || error?.code === 'EACCES' || error?.code === 'EPERM' || /not recognized|cannot find|access is denied|spawn EPERM/i.test(message))
     );
 
     if (!shouldFallbackToNpx) {
