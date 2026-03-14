@@ -44,46 +44,60 @@ export async function registerAiRoutes(fastify) {
   });
 
   fastify.get('/ws/agent', { websocket: true }, async (connection, request) => {
-    const token = getAgentTokenFromRequest(request);
-    if (!fastify.aiService.isAgentTokenValid(token)) {
-      fastify.log.warn('Rejecting agent websocket connection because the token is invalid.');
-      connection.socket.close(4001, 'Invalid agent token');
-      return;
-    }
-
-    const session = await fastify.aiService.openAgentSession(connection.socket);
-    fastify.log.info({ sessionId: session.id }, 'Agent websocket connected.');
-    connection.socket.send(JSON.stringify({
-      type: 'agent.ready',
-      payload: {
-        sessionId: session.id,
-      },
-    }));
-
-    connection.socket.on('message', async (raw) => {
-      try {
-        await fastify.aiService.handleAgentSocketMessage(session.id, raw.toString());
-      } catch (error) {
-        try {
-          connection.socket.send(JSON.stringify({
-            type: 'agent.error',
-            payload: {
-              message: error.message || 'Failed to process agent event.',
-            },
-          }));
-        } catch {
-          // Ignore late websocket write failures.
-        }
+    try {
+      const token = getAgentTokenFromRequest(request);
+      if (!fastify.aiService.isAgentTokenValid(token)) {
+        console.warn('[agent-ws] rejecting connection because the token is invalid');
+        connection.socket.close(4001, 'Invalid agent token');
+        return;
       }
-    });
 
-    const close = () => {
-      fastify.log.info({ sessionId: session.id }, 'Agent websocket disconnected.');
-      fastify.aiService.closeAgentSession(session.id).catch(() => undefined);
-    };
+      const session = await fastify.aiService.openAgentSession(connection.socket);
+      console.log(`[agent-ws] connected session=${session.id}`);
+      connection.socket.send(JSON.stringify({
+        type: 'agent.ready',
+        payload: {
+          sessionId: session.id,
+        },
+      }));
 
-    connection.socket.on('close', close);
-    connection.socket.on('error', close);
+      connection.socket.on('message', async (raw) => {
+        try {
+          await fastify.aiService.handleAgentSocketMessage(session.id, raw.toString());
+        } catch (error) {
+          console.error(`[agent-ws] message handler failed session=${session.id}`, error);
+          try {
+            connection.socket.send(JSON.stringify({
+              type: 'agent.error',
+              payload: {
+                message: error.message || 'Failed to process agent event.',
+              },
+            }));
+          } catch {
+            // Ignore late websocket write failures.
+          }
+        }
+      });
+
+      const close = (eventOrError) => {
+        if (eventOrError instanceof Error) {
+          console.error(`[agent-ws] transport error session=${session.id}`, eventOrError);
+        } else {
+          console.log(`[agent-ws] disconnected session=${session.id}`);
+        }
+        fastify.aiService.closeAgentSession(session.id).catch(() => undefined);
+      };
+
+      connection.socket.on('close', close);
+      connection.socket.on('error', close);
+    } catch (error) {
+      console.error('[agent-ws] failed during websocket setup', error);
+      try {
+        connection.socket.close(1011, 'Agent websocket setup failed');
+      } catch {
+        // Ignore close failures if the socket already dropped.
+      }
+    }
   });
 
   fastify.post('/api/agent/jobs/:jobId/result', { preHandler: requireAgentAuth }, async (request) => {
