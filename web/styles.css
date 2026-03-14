@@ -581,7 +581,7 @@ input[type="password"]:focus {
 
 .message-list {
   flex: none;
-  min-height: 180px;
+  min-height: 96px;
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -596,6 +596,7 @@ input[type="password"]:focus {
 }
 
 .chat-resizer {
+  margin-top: auto;
   height: 16px;
   cursor: row-resize;
   display: flex;

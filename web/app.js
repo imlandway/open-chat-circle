@@ -1,5 +1,6 @@
-const CHAT_HEIGHT_STORAGE_VERSION = '3';
-const DEFAULT_CHAT_LIST_HEIGHT = 220;
+const CHAT_HEIGHT_STORAGE_VERSION = '4';
+const DEFAULT_CHAT_LIST_HEIGHT = 120;
+const MIN_CHAT_LIST_HEIGHT = 96;
 const REMEMBERED_ACCOUNTS_KEY = 'open-chat-circle-remembered-accounts';
 const LEGACY_REMEMBERED_KEY = 'open-chat-circle-remembered';
 const MAX_REMEMBERED_ACCOUNTS = 8;
@@ -569,8 +570,8 @@ function applyChatHeight() {
   const headerHeight = chatPanel.querySelector('.chat-header')?.offsetHeight || 0;
   const composerHeight = messageForm.offsetHeight || 0;
   const resizerHeight = chatResizer.offsetHeight || 16;
-  const maxHeight = Math.max(180, panelHeight - headerHeight - composerHeight - resizerHeight - 24);
-  const nextHeight = clamp(state.chatListHeight, 180, maxHeight);
+  const maxHeight = Math.max(MIN_CHAT_LIST_HEIGHT, panelHeight - headerHeight - composerHeight - resizerHeight - 24);
+  const nextHeight = clamp(state.chatListHeight, MIN_CHAT_LIST_HEIGHT, maxHeight);
 
   state.chatListHeight = nextHeight;
   messageList.style.height = `${nextHeight}px`;
