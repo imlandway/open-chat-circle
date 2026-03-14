@@ -41,7 +41,9 @@ async function postJson(path, body) {
     throw new Error(raw || `Request failed with ${response.status}`);
   }
 
-  return response.json();
+  const data = await response.json();
+  console.log(`HTTP POST ${path} -> ok`);
+  return data;
 }
 
 async function uploadImage(filePath, fileName = basename(filePath)) {
@@ -137,6 +139,7 @@ async function main() {
 
       jobChain = jobChain.then(async () => {
         const job = message.payload;
+        console.log(`Received job ${job.id} (${job.toolName})`);
         const tool = tools[job.toolName];
         if (!tool) {
           await postJson(`/api/agent/jobs/${job.id}/result`, {
@@ -148,6 +151,7 @@ async function main() {
 
         try {
           if (job.requiresApproval) {
+            console.log(`Job ${job.id} requires approval`);
             const approved = await askForApproval(job);
             if (!approved) {
               await postJson(`/api/agent/jobs/${job.id}/result`, {
@@ -158,12 +162,15 @@ async function main() {
             }
           }
 
+          console.log(`Running job ${job.id} (${job.toolName})`);
           const result = await tool(job.arguments || {});
+          console.log(`Completed job ${job.id} (${job.toolName})`);
           await postJson(`/api/agent/jobs/${job.id}/result`, {
             success: true,
             result,
           });
         } catch (error) {
+          console.error(`Job ${job.id} failed before result upload`, error);
           await postJson(`/api/agent/jobs/${job.id}/result`, {
             success: false,
             error: error.message || 'Tool execution failed.',

@@ -777,6 +777,7 @@ export class AiService {
       return offlineResult;
     }
 
+    console.log(`[agent-job] dispatching ${job.id} tool=${toolName}`);
     await this.dispatchJob(job.id);
 
     return new Promise((resolve) => {
@@ -850,6 +851,7 @@ export class AiService {
     const success = payload.success !== false && !payload.error && !result.error;
     const error = payload.error || result.error || '';
     const finishedAt = new Date().toISOString();
+    console.log(`[agent-job] completed ${jobId} success=${success}${error ? ` error=${error}` : ''}`);
 
     await this.store.mutate(AGENT_JOBS, (jobs) => jobs.map((job) => (
       job.id === jobId
