@@ -1,5 +1,5 @@
-const CHAT_HEIGHT_STORAGE_VERSION = '2';
-const DEFAULT_CHAT_LIST_HEIGHT = 280;
+const CHAT_HEIGHT_STORAGE_VERSION = '3';
+const DEFAULT_CHAT_LIST_HEIGHT = 220;
 const REMEMBERED_ACCOUNTS_KEY = 'open-chat-circle-remembered-accounts';
 const LEGACY_REMEMBERED_KEY = 'open-chat-circle-remembered';
 const MAX_REMEMBERED_ACCOUNTS = 8;
@@ -1885,6 +1885,7 @@ function renderMessages() {
   if (!state.activeConversation) {
     chatPanel.classList.add('hidden');
     emptyState.classList.remove('hidden');
+    messageList.classList.remove('empty');
     clearReplyTarget();
     closeMessageContextMenu();
     return;
@@ -1905,11 +1906,13 @@ function renderMessages() {
   });
 
   if (state.messages.length === 0) {
+    messageList.classList.add('empty');
     messageList.innerHTML = '<div class="meta">还没有消息，发一条试试吧。</div>';
     closeMessageContextMenu();
     return;
   }
 
+  messageList.classList.remove('empty');
   messageList.innerHTML = '';
 
   for (const message of state.messages) {
