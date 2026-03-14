@@ -685,3 +685,60 @@ test('assistant account can be added to groups without friendship and group cont
 
   await rm(dataDir, { recursive: true, force: true });
 });
+
+test('manual image messages are blocked for users but still allowed for assistant screenshots', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
+  const store = new JsonStore(dataDir);
+  const sessionService = new SessionService('test-secret');
+  const authService = new AuthService(store, sessionService);
+  const socialService = new SocialService(store);
+  const chatService = new ChatService(store);
+
+  await authService.ensureSeedAdmin();
+  await store.write('invites', [
+    {
+      id: 'invite_test',
+      code: 'TEST-OPEN',
+      createdBy: 'user_admin',
+      maxUses: 10,
+      usedCount: 0,
+      expiresAt: '2027-01-01T00:00:00.000Z',
+      status: 'active',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    },
+  ]);
+
+  const admin = await authService.getUserById('user_admin');
+  const bob = await authService.registerWithInvite({
+    inviteCode: 'TEST-OPEN',
+    nickname: 'Bob',
+    password: 'password123',
+  });
+  const assistant = await authService.ensureAssistantUser({
+    account: 'codex',
+    nickname: 'AI 助手',
+  });
+
+  await socialService.addFriend(admin.id, { userId: bob.user.id });
+
+  const userConversation = await chatService.createDirectConversation(admin.id, bob.user.id);
+  await assert.rejects(
+    () => chatService.sendMessage(admin.id, userConversation.id, {
+      type: 'image',
+      imageUrl: 'https://cdn.example.com/manual.png',
+      imageName: 'manual.png',
+    }),
+    /Only assistant accounts can send image messages/,
+  );
+
+  const assistantConversation = await chatService.createDirectConversation(admin.id, assistant.id);
+  const sent = await chatService.sendMessage(assistant.id, assistantConversation.id, {
+    type: 'image',
+    imageUrl: 'https://cdn.example.com/screenshot.png',
+    imageName: 'screenshot.png',
+  });
+  assert.equal(sent.message.type, 'image');
+  assert.equal(sent.message.imageName, 'screenshot.png');
+
+  await rm(dataDir, { recursive: true, force: true });
+});

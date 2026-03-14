@@ -268,6 +268,12 @@ export class ChatService {
 
     const messages = await this.store.read(MESSAGES);
     const users = await this.store.read(USERS);
+    const sender = users.find((user) => user.id === userId && user.status === 'active');
+    assert(sender, 404, 'Sender not found.');
+
+    if (payload.type === 'image') {
+      assert(sender.isAssistant, 403, 'Only assistant accounts can send image messages.');
+    }
 
     let replyToMessageId = payload.replyToMessageId?.trim() || '';
     if (replyToMessageId) {

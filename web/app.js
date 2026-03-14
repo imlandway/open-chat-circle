@@ -67,7 +67,6 @@ const createInviteBtn = document.querySelector('#create-invite-btn');
 const messageForm = document.querySelector('#message-form');
 const replyPreview = document.querySelector('#reply-preview');
 const messageInput = document.querySelector('#message-input');
-const imageInput = document.querySelector('#image-input');
 const toast = document.querySelector('#toast');
 const groupDialog = document.querySelector('#group-dialog');
 const groupForm = document.querySelector('#group-form');
@@ -206,10 +205,6 @@ function wireStaticEvents() {
   messageForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     await submitTextMessage();
-  });
-
-  imageInput.addEventListener('change', async () => {
-    await submitImageMessage();
   });
 
   chatResizer.addEventListener('pointerdown', startChatResize);
@@ -2204,41 +2199,6 @@ async function submitTextMessage() {
     if (didMessagePersist({ type: 'text', text, submittedAt })) {
       messageInput.value = '';
       showToast('消息已发出');
-      return;
-    }
-    handleError(error);
-  }
-}
-
-async function submitImageMessage() {
-  const file = imageInput.files?.[0];
-  imageInput.value = '';
-
-  if (!file || !state.activeConversation) {
-    return;
-  }
-
-  const submittedAt = Date.now();
-
-  try {
-    const upload = await uploadImage(file);
-    const response = await api(`/api/conversations/${state.activeConversation.id}/messages`, {
-      method: 'POST',
-      body: {
-        type: 'image',
-        imageUrl: upload.url,
-        imageName: upload.name,
-        replyToMessageId: state.replyToMessageId,
-      },
-    });
-    clearReplyTarget();
-    applyConversationUpdate(response.conversation);
-    upsertMessage(response.message);
-    render();
-  } catch (error) {
-    await refreshActiveConversation(false);
-    if (didMessagePersist({ type: 'image', imageName: file.name, submittedAt })) {
-      showToast('图片已发出');
       return;
     }
     handleError(error);
