@@ -36,6 +36,10 @@ function resolvePublicBaseUrl(request, configuredBaseUrl) {
   return `${protocol}://${host}`;
 }
 
+function getWebSocketTransport(connection) {
+  return connection?.socket ?? connection;
+}
+
 export async function registerAiRoutes(fastify) {
   fastify.post('/api/ai/conversation', { preHandler: requireAdmin }, async (request) => {
     return {
@@ -44,30 +48,31 @@ export async function registerAiRoutes(fastify) {
   });
 
   fastify.get('/ws/agent', { websocket: true }, async (connection, request) => {
+    const socket = getWebSocketTransport(connection);
     try {
       const token = getAgentTokenFromRequest(request);
       if (!fastify.aiService.isAgentTokenValid(token)) {
         console.warn('[agent-ws] rejecting connection because the token is invalid');
-        connection.socket.close(4001, 'Invalid agent token');
+        socket?.close?.(4001, 'Invalid agent token');
         return;
       }
 
-      const session = await fastify.aiService.openAgentSession(connection.socket);
+      const session = await fastify.aiService.openAgentSession(socket);
       console.log(`[agent-ws] connected session=${session.id}`);
-      connection.socket.send(JSON.stringify({
+      socket.send(JSON.stringify({
         type: 'agent.ready',
         payload: {
           sessionId: session.id,
         },
       }));
 
-      connection.socket.on('message', async (raw) => {
+      socket.on('message', async (raw) => {
         try {
           await fastify.aiService.handleAgentSocketMessage(session.id, raw.toString());
         } catch (error) {
           console.error(`[agent-ws] message handler failed session=${session.id}`, error);
           try {
-            connection.socket.send(JSON.stringify({
+            socket.send(JSON.stringify({
               type: 'agent.error',
               payload: {
                 message: error.message || 'Failed to process agent event.',
@@ -88,12 +93,12 @@ export async function registerAiRoutes(fastify) {
         fastify.aiService.closeAgentSession(session.id).catch(() => undefined);
       };
 
-      connection.socket.on('close', close);
-      connection.socket.on('error', close);
+      socket.on('close', close);
+      socket.on('error', close);
     } catch (error) {
       console.error('[agent-ws] failed during websocket setup', error);
       try {
-        connection.socket.close(1011, 'Agent websocket setup failed');
+        socket?.close?.(1011, 'Agent websocket setup failed');
       } catch {
         // Ignore close failures if the socket already dropped.
       }

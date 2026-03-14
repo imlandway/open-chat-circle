@@ -204,9 +204,10 @@ export async function buildApp() {
   });
 
   app.get('/ws', { websocket: true }, async (connection, request) => {
+    const socket = connection?.socket ?? connection;
     const user = await resolveRequestUser(request, app);
-    realtimeHub.addSocket(user.id, connection.socket);
-    connection.socket.send(JSON.stringify({
+    realtimeHub.addSocket(user.id, socket);
+    socket.send(JSON.stringify({
       type: 'ws.ready',
       payload: {
         userId: user.id,
