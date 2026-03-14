@@ -6,6 +6,7 @@
 /build/
 /coverage/
 /node_modules/
+/agent/node_modules/
 /backend/node_modules/
 /backend/.turbo/
 /backend/dist/

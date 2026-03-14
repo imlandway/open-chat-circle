@@ -5,7 +5,6 @@ const ASSISTANT_RUNS = 'assistantRuns';
 const AGENT_JOBS = 'agentJobs';
 const AGENT_SESSIONS = 'agentSessions';
 const CONVERSATIONS = 'conversations';
-const MESSAGES = 'messages';
 
 const TOOL_APPROVALS = {
   fs_list: false,
@@ -144,11 +143,6 @@ const TOOL_DEFINITIONS = [
   },
 ];
 
-function toTimestamp(value) {
-  const timestamp = new Date(value ?? 0).getTime();
-  return Number.isFinite(timestamp) ? timestamp : 0;
-}
-
 function parseToolArguments(rawArguments) {
   if (!rawArguments) {
     return {};
@@ -164,26 +158,6 @@ function parseToolArguments(rawArguments) {
   }
 }
 
-function extractResponseText(response) {
-  if (typeof response?.output_text === 'string' && response.output_text.trim()) {
-    return response.output_text.trim();
-  }
-
-  const parts = [];
-  for (const item of response?.output ?? []) {
-    if (item?.type !== 'message') {
-      continue;
-    }
-    for (const content of item.content ?? []) {
-      if (content?.type === 'output_text' && content.text) {
-        parts.push(content.text);
-      }
-    }
-  }
-
-  return parts.join('\n').trim();
-}
-
 function buildSystemPrompt() {
   return [
     'You are Codex inside Open Chat Circle.',
@@ -192,7 +166,7 @@ function buildSystemPrompt() {
     'Do not claim actions completed unless a tool result confirms it.',
     'Be concise, collaborative, and practical.',
     'When a tool fails, explain what failed and what the user can do next.',
-    'If you receive a screenshot tool result, you can summarize what is visible before continuing.',
+    'If you receive a screenshot tool result, summarize what is visible before continuing.',
   ].join(' ');
 }
 
@@ -201,7 +175,10 @@ function normalizeToolResult(result) {
     return {
       type: 'text',
       text: '',
+      imageUrl: '',
+      imageName: '',
       metadata: {},
+      error: '',
     };
   }
 
@@ -227,36 +204,288 @@ function toModelToolOutput(result) {
   };
 }
 
-function createOpenAiClient(config) {
+function toToolCallDefinitionsForChatCompletions(toolDefinitions) {
+  return toolDefinitions.map((tool) => ({
+    type: 'function',
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    },
+  }));
+}
+
+function createJsonTransport({ baseUrl, apiKey }) {
+  return async function requestJson(path, payload) {
+    const response = await fetch(`${baseUrl}${path}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const raw = await response.text();
+    const data = raw ? JSON.parse(raw) : null;
+    if (!response.ok) {
+      throw new Error(data?.error?.message || 'AI provider request failed.');
+    }
+    return data;
+  };
+}
+
+function extractResponsesApiText(state) {
+  if (typeof state?.response?.output_text === 'string' && state.response.output_text.trim()) {
+    return state.response.output_text.trim();
+  }
+
+  const parts = [];
+  for (const item of state?.response?.output ?? []) {
+    if (item?.type !== 'message') {
+      continue;
+    }
+    for (const content of item.content ?? []) {
+      if (content?.type === 'output_text' && content.text) {
+        parts.push(content.text);
+      }
+    }
+  }
+
+  return parts.join('\n').trim();
+}
+
+function createResponsesApiClient(config, transport = null) {
+  const requestJson = transport ?? createJsonTransport({
+    baseUrl: (config.aiBaseUrl || 'https://api.openai.com/v1').replace(/\/$/, ''),
+    apiKey: config.aiApiKey || config.openaiApiKey,
+  });
+
   return {
-    async createResponse(payload) {
-      const response = await fetch('https://api.openai.com/v1/responses', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${config.openaiApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
+    async start({ systemPrompt, messages, tools }) {
+      const response = await requestJson('/responses', {
+        model: config.aiModel || config.openaiModel || 'gpt-5',
+        input: [
+          {
+            role: 'system',
+            content: [{ type: 'input_text', text: systemPrompt }],
+          },
+          ...messages.map((message) => ({
+            role: message.role,
+            content: [{ type: 'input_text', text: message.text }],
+          })),
+        ],
+        tools,
       });
 
-      const raw = await response.text();
-      const data = raw ? JSON.parse(raw) : null;
-      if (!response.ok) {
-        throw new Error(data?.error?.message || 'OpenAI request failed.');
-      }
-      return data;
+      return {
+        provider: 'openai',
+        response,
+      };
+    },
+
+    async continue(state, toolOutputs) {
+      const response = await requestJson('/responses', {
+        model: config.aiModel || config.openaiModel || 'gpt-5',
+        previous_response_id: state.response.id,
+        input: toolOutputs.map((toolOutput) => ({
+          type: 'function_call_output',
+          call_id: toolOutput.callId,
+          output: JSON.stringify(toModelToolOutput(toolOutput.result)),
+        })),
+      });
+
+      return {
+        provider: 'openai',
+        response,
+      };
+    },
+
+    getToolCalls(state) {
+      return (state.response.output ?? [])
+        .filter((item) => item?.type === 'function_call')
+        .map((item) => ({
+          callId: item.call_id,
+          name: item.name,
+          arguments: item.arguments,
+        }));
+    },
+
+    getText(state) {
+      return extractResponsesApiText(state);
     },
   };
 }
 
+function createLegacyResponsesClient(config, legacyClient) {
+  if (!legacyClient) {
+    return null;
+  }
+
+  return {
+    async start({ systemPrompt, messages, tools }) {
+      const response = await legacyClient.createResponse({
+        model: config.aiModel || config.openaiModel || 'gpt-5',
+        input: [
+          {
+            role: 'system',
+            content: [{ type: 'input_text', text: systemPrompt }],
+          },
+          ...messages.map((message) => ({
+            role: message.role,
+            content: [{ type: 'input_text', text: message.text }],
+          })),
+        ],
+        tools,
+      });
+
+      return {
+        provider: 'openai',
+        response,
+      };
+    },
+
+    async continue(state, toolOutputs) {
+      const response = await legacyClient.createResponse({
+        model: config.aiModel || config.openaiModel || 'gpt-5',
+        previous_response_id: state.response.id,
+        input: toolOutputs.map((toolOutput) => ({
+          type: 'function_call_output',
+          call_id: toolOutput.callId,
+          output: JSON.stringify(toModelToolOutput(toolOutput.result)),
+        })),
+      });
+
+      return {
+        provider: 'openai',
+        response,
+      };
+    },
+
+    getToolCalls(state) {
+      return (state.response.output ?? [])
+        .filter((item) => item?.type === 'function_call')
+        .map((item) => ({
+          callId: item.call_id,
+          name: item.name,
+          arguments: item.arguments,
+        }));
+    },
+
+    getText(state) {
+      return extractResponsesApiText(state);
+    },
+  };
+}
+
+function createChatCompletionsClient(config, transport = null) {
+  const requestJson = transport ?? createJsonTransport({
+    baseUrl: (config.aiBaseUrl || 'https://api.deepseek.com').replace(/\/$/, ''),
+    apiKey: config.aiApiKey,
+  });
+
+  return {
+    async start({ systemPrompt, messages, tools }) {
+      const chatMessages = [
+        { role: 'system', content: systemPrompt },
+        ...messages.map((message) => ({
+          role: message.role,
+          content: message.text,
+        })),
+      ];
+
+      const completion = await requestJson('/chat/completions', {
+        model: config.aiModel || 'deepseek-chat',
+        messages: chatMessages,
+        tools: toToolCallDefinitionsForChatCompletions(tools),
+      });
+
+      return {
+        provider: 'chat-completions',
+        messages: chatMessages,
+        completion,
+      };
+    },
+
+    async continue(state, toolOutputs, tools) {
+      const assistantMessage = state.completion?.choices?.[0]?.message ?? {};
+      const nextMessages = [
+        ...state.messages,
+        {
+          role: 'assistant',
+          content: assistantMessage.content ?? '',
+          tool_calls: assistantMessage.tool_calls ?? [],
+        },
+        ...toolOutputs.map((toolOutput) => ({
+          role: 'tool',
+          tool_call_id: toolOutput.callId,
+          content: JSON.stringify(toModelToolOutput(toolOutput.result)),
+        })),
+      ];
+
+      const completion = await requestJson('/chat/completions', {
+        model: config.aiModel || 'deepseek-chat',
+        messages: nextMessages,
+        tools: toToolCallDefinitionsForChatCompletions(tools),
+      });
+
+      return {
+        provider: 'chat-completions',
+        messages: nextMessages,
+        completion,
+      };
+    },
+
+    getToolCalls(state) {
+      return (state.completion?.choices?.[0]?.message?.tool_calls ?? []).map((toolCall) => ({
+        callId: toolCall.id,
+        name: toolCall.function?.name,
+        arguments: toolCall.function?.arguments,
+      }));
+    },
+
+    getText(state) {
+      return String(state.completion?.choices?.[0]?.message?.content || '').trim();
+    },
+  };
+}
+
+function createAiClient(config, { aiClient = null, openaiClient = null } = {}) {
+  if (aiClient) {
+    return aiClient;
+  }
+
+  const legacyClient = createLegacyResponsesClient(config, openaiClient);
+  if (legacyClient) {
+    return legacyClient;
+  }
+
+  if ((config.aiProvider || 'openai').toLowerCase() === 'deepseek') {
+    return createChatCompletionsClient({
+      ...config,
+      aiBaseUrl: config.aiBaseUrl || 'https://api.deepseek.com',
+      aiModel: config.aiModel || 'deepseek-chat',
+    });
+  }
+
+  return createResponsesApiClient({
+    ...config,
+    aiBaseUrl: config.aiBaseUrl || 'https://api.openai.com/v1',
+    aiModel: config.aiModel || config.openaiModel || 'gpt-5',
+  });
+}
+
 export class AiService {
-  constructor({ store, config, authService, chatService, realtimeHub, openaiClient = null }) {
+  constructor({ store, config, authService, chatService, realtimeHub, aiClient = null, openaiClient = null }) {
     this.store = store;
     this.config = config;
     this.authService = authService;
     this.chatService = chatService;
     this.realtimeHub = realtimeHub;
-    this.openaiClient = openaiClient ?? createOpenAiClient(config);
+    this.aiClient = createAiClient(config, {
+      aiClient,
+      openaiClient,
+    });
     this.runLocks = new Map();
     this.jobWaiters = new Map();
     this.agentSockets = new Map();
@@ -383,10 +612,10 @@ export class AiService {
     }));
 
     try {
-      if (!this.config.openaiApiKey) {
+      if (!this.config.aiApiKey && !this.config.openaiApiKey) {
         const message = await this.postAssistantText(
           run.conversationId,
-          'OpenAI API key 尚未配置，当前还不能执行 AI/本地 agent 指令。',
+          'AI API key 尚未配置，当前还不能执行 AI/本地 agent 指令。',
         );
         await this.finishRun(runId, {
           status: 'completed',
@@ -396,15 +625,9 @@ export class AiService {
       }
 
       const contextMessages = await this.buildRunContext(run);
-      let response = await this.openaiClient.createResponse({
-        model: this.config.openaiModel,
-        input: [
-          {
-            role: 'system',
-            content: [{ type: 'input_text', text: buildSystemPrompt() }],
-          },
-          ...contextMessages,
-        ],
+      let response = await this.aiClient.start({
+        systemPrompt: buildSystemPrompt(),
+        messages: contextMessages,
         tools: TOOL_DEFINITIONS,
       });
 
@@ -412,9 +635,9 @@ export class AiService {
       const pendingImages = [];
 
       for (let step = 0; step < 6; step += 1) {
-        const toolCalls = (response.output ?? []).filter((item) => item?.type === 'function_call');
+        const toolCalls = this.aiClient.getToolCalls(response);
         if (toolCalls.length === 0) {
-          const finalText = extractResponseText(response) || '我已经处理完了。';
+          const finalText = this.aiClient.getText(response) || '我已经处理完了。';
 
           for (const image of pendingImages) {
             const sentImage = await this.postAssistantImage(run.conversationId, image);
@@ -437,17 +660,12 @@ export class AiService {
             pendingImages.push(result);
           }
           toolOutputs.push({
-            type: 'function_call_output',
-            call_id: toolCall.call_id,
-            output: JSON.stringify(toModelToolOutput(result)),
+            callId: toolCall.callId,
+            result,
           });
         }
 
-        response = await this.openaiClient.createResponse({
-          model: this.config.openaiModel,
-          previous_response_id: response.id,
-          input: toolOutputs,
-        });
+        response = await this.aiClient.continue(response, toolOutputs, TOOL_DEFINITIONS);
       }
 
       const timeoutMessage = await this.postAssistantText(
@@ -482,6 +700,7 @@ export class AiService {
       .slice(-20)
       .map((message) => {
         const textParts = [];
+
         if (message.replyTo) {
           const replySender = message.replyTo.sender?.nickname || 'unknown';
           const replyText = message.replyTo.type === 'image'
@@ -498,12 +717,7 @@ export class AiService {
 
         return {
           role: message.senderId === assistant.id ? 'assistant' : 'user',
-          content: [
-            {
-              type: 'input_text',
-              text: textParts.join('\n\n').trim() || '[Empty message]',
-            },
-          ],
+          text: textParts.join('\n\n').trim() || '[Empty message]',
         };
       });
   }
@@ -518,7 +732,7 @@ export class AiService {
       conversationId: run.conversationId,
       toolName,
       argumentsPayload,
-      callId: toolCall.call_id,
+      callId: toolCall.callId,
       requiresApproval: TOOL_APPROVALS[toolName],
     });
   }
