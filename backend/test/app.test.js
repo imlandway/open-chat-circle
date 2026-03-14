@@ -966,3 +966,65 @@ test('assistant account can be added to groups without friendship and group cont
 
   await rm(dataDir, { recursive: true, force: true });
 });
+
+test('group assistant targeting prefers mentioned codex and defaults to deepseek', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
+  const store = new JsonStore(dataDir);
+  const sessionService = new SessionService('test-secret');
+  const authService = new AuthService(store, sessionService);
+  const socialService = new SocialService(store);
+  const chatService = new ChatService(store);
+  const aiService = new AiService({
+    store,
+    authService,
+    chatService,
+    realtimeHub: {
+      broadcastUsers() {},
+    },
+    config: {
+      openaiApiKey: 'test-key',
+      openaiModel: 'gpt-test',
+      aiAgentToken: 'agent-token',
+    },
+  });
+
+  await authService.ensureSeedAdmin();
+  await store.write('invites', [
+    {
+      id: 'invite_test',
+      code: 'TEST-OPEN',
+      createdBy: 'user_admin',
+      maxUses: 10,
+      usedCount: 0,
+      expiresAt: '2027-01-01T00:00:00.000Z',
+      status: 'active',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    },
+  ]);
+
+  const admin = await authService.getUserById('user_admin');
+  const friend = await authService.registerWithInvite({
+    inviteCode: 'TEST-OPEN',
+    nickname: 'Bob',
+    password: 'password123',
+  });
+  await socialService.addFriend(admin.id, { userId: friend.user.id });
+
+  const codex = await aiService.getAssistantUser('codex');
+  const deepseek = await aiService.getAssistantUser('deepseek');
+  const group = await chatService.createGroupConversation(admin.id, {
+    name: 'AI Group',
+    memberIds: [friend.user.id, codex.id, deepseek.id],
+  });
+
+  const codexTargets = await aiService.resolveMessageAssistants(group.id, 'codex你说句话');
+  assert.deepEqual(codexTargets.map((assistant) => assistant.kind), ['codex']);
+
+  const deepseekTargets = await aiService.resolveMessageAssistants(group.id, '你们来评价一下这个群名');
+  assert.deepEqual(deepseekTargets.map((assistant) => assistant.kind), ['deepseek']);
+
+  const bothTargets = await aiService.resolveMessageAssistants(group.id, '@codex 和 @deepseek 都说一下');
+  assert.deepEqual(bothTargets.map((assistant) => assistant.kind).sort(), ['codex', 'deepseek']);
+
+  await rm(dataDir, { recursive: true, force: true });
+});

@@ -619,28 +619,54 @@ export class AiService {
     return assistants.find((item) => item.user.id === userId) || null;
   }
 
-  async getConversationAssistant(conversationId) {
+  async getConversationAssistants(conversationId) {
     const [assistants, conversations] = await Promise.all([
       this.getAssistantUsers(),
       this.store.read(CONVERSATIONS),
     ]);
     const conversation = conversations.find((item) => item.id === conversationId);
     if (!conversation || !Array.isArray(conversation.memberIds)) {
-      return null;
+      return [];
     }
 
-    if (conversation.type === 'group') {
-      const deepseek = assistants.find((assistant) => (
-        assistant.kind === 'deepseek'
-        && conversation.memberIds.includes(assistant.user.id)
-      ));
-      if (deepseek) {
-        return deepseek;
-      }
-      return assistants.find((assistant) => conversation.memberIds.includes(assistant.user.id)) || null;
+    return assistants.filter((assistant) => conversation.memberIds.includes(assistant.user.id));
+  }
+
+  async getConversationAssistant(conversationId) {
+    const assistants = await this.getConversationAssistants(conversationId);
+    const deepseek = assistants.find((assistant) => assistant.kind === 'deepseek');
+    return deepseek || assistants[0] || null;
+  }
+
+  async resolveMessageAssistants(conversationId, messageText = '') {
+    const assistants = await this.getConversationAssistants(conversationId);
+    if (assistants.length === 0) {
+      return [];
     }
 
-    return assistants.find((assistant) => conversation.memberIds.includes(assistant.user.id)) || null;
+    const normalizedText = String(messageText || '').trim().toLowerCase();
+    if (!normalizedText) {
+      const defaultAssistant = assistants.find((assistant) => assistant.kind === 'deepseek') || assistants[0];
+      return defaultAssistant ? [defaultAssistant] : [];
+    }
+
+    const matchedAssistants = assistants.filter((assistant) => {
+      const account = String(assistant.account || '').trim().toLowerCase();
+      const nickname = String(assistant.nickname || '').trim().toLowerCase();
+      return (
+        (account && normalizedText.includes(account))
+        || (nickname && normalizedText.includes(nickname))
+        || (account && normalizedText.includes(`@${account}`))
+        || (nickname && normalizedText.includes(`@${nickname}`))
+      );
+    });
+
+    if (matchedAssistants.length > 0) {
+      return matchedAssistants;
+    }
+
+    const defaultAssistant = assistants.find((assistant) => assistant.kind === 'deepseek') || assistants[0];
+    return defaultAssistant ? [defaultAssistant] : [];
   }
 
   isAgentTokenValid(token) {
@@ -703,8 +729,10 @@ export class AiService {
     return Boolean(await this.getConversationAssistant(conversationId));
   }
 
-  async enqueueConversationRun({ actorUserId, conversationId, triggerMessageId }) {
-    const assistant = await this.getConversationAssistant(conversationId);
+  async enqueueConversationRun({ actorUserId, conversationId, triggerMessageId, assistantUserId = '' }) {
+    const assistant = assistantUserId
+      ? await this.getAssistantProfileByUserId(assistantUserId)
+      : await this.getConversationAssistant(conversationId);
     assert(assistant, 404, 'Assistant conversation not found.');
     const run = {
       id: `run_${randomUUID()}`,

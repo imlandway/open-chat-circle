@@ -142,22 +142,30 @@ export async function registerChatRoutes(fastify) {
       // The message is already persisted; realtime fanout should not break send.
     }
 
-    const assistant = request.currentUser.isAdmin
-      ? await fastify.aiService.getConversationAssistant(request.params.conversationId)
+    const assistants = request.currentUser.isAdmin
+      ? await fastify.aiService.getConversationAssistants(request.params.conversationId)
       : null;
 
     if (
       request.currentUser.isAdmin
-      && assistant
-      && result.message.senderId !== assistant.user.id
+      && assistants?.length
+      && !assistants.some((assistant) => result.message.senderId === assistant.user.id)
     ) {
-      fastify.aiService.enqueueConversationRun({
-        actorUserId: request.currentUser.id,
-        conversationId: request.params.conversationId,
-        triggerMessageId: result.message.id,
-      }).catch((error) => {
-        console.error('Failed to enqueue assistant run.', error);
-      });
+      const targetAssistants = await fastify.aiService.resolveMessageAssistants(
+        request.params.conversationId,
+        result.message.text || '',
+      );
+
+      for (const assistant of targetAssistants) {
+        fastify.aiService.enqueueConversationRun({
+          actorUserId: request.currentUser.id,
+          conversationId: request.params.conversationId,
+          triggerMessageId: result.message.id,
+          assistantUserId: assistant.user.id,
+        }).catch((error) => {
+          console.error('Failed to enqueue assistant run.', error);
+        });
+      }
     }
 
     return {
