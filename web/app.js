@@ -2326,7 +2326,7 @@ function initializeAvatarCrop() {
     return;
   }
 
-  const rect = avatarCropStage.getBoundingClientRect();
+  const rect = getAvatarCropViewportRect();
   state.avatarCrop.baseScale = Math.max(
     rect.width / state.avatarCrop.image.width,
     rect.height / state.avatarCrop.image.height,
@@ -2356,7 +2356,7 @@ function clampAvatarCropOffsets() {
     return;
   }
 
-  const rect = avatarCropStage.getBoundingClientRect();
+  const rect = getAvatarCropViewportRect();
   const totalScale = state.avatarCrop.baseScale * state.avatarCrop.zoom;
   const maxOffsetX = Math.max(0, (state.avatarCrop.image.width * totalScale - rect.width) / 2);
   const maxOffsetY = Math.max(0, (state.avatarCrop.image.height * totalScale - rect.height) / 2);
@@ -2502,7 +2502,7 @@ function zoomAvatarCrop(nextZoom, clientX, clientY) {
 }
 
 function toCropCoordinates(clientX, clientY) {
-  const rect = avatarCropStage.getBoundingClientRect();
+  const rect = getAvatarCropViewportRect();
   return {
     x: clientX - (rect.left + rect.width / 2),
     y: clientY - (rect.top + rect.height / 2),
@@ -2525,10 +2525,9 @@ async function exportAvatarCrop() {
     throw new Error('请先选择头像图片');
   }
 
-  const rect = avatarCropStage.getBoundingClientRect();
+  const rect = getAvatarCropViewportRect();
   const outputSize = 512;
-  const cropSize = rect.width - state.avatarCrop.viewportInset * 2;
-  const ratio = outputSize / cropSize;
+  const ratio = outputSize / rect.width;
   const totalScale = state.avatarCrop.baseScale * state.avatarCrop.zoom * ratio;
   const canvas = document.createElement('canvas');
   canvas.width = outputSize;
@@ -2601,6 +2600,17 @@ async function persistGroupAvatarCrop(file) {
 function normalizeAvatarFileName(fileName) {
   const base = String(fileName || 'avatar').replace(/\.[^.]+$/, '');
   return `${base || 'avatar'}-avatar.png`;
+}
+
+function getAvatarCropViewportRect() {
+  const rect = avatarCropStage.getBoundingClientRect();
+  const inset = state.avatarCrop.viewportInset || 0;
+  return {
+    left: rect.left + inset,
+    top: rect.top + inset,
+    width: Math.max(1, rect.width - inset * 2),
+    height: Math.max(1, rect.height - inset * 2),
+  };
 }
 
 function mergeConversation(conversation) {
@@ -2877,4 +2887,8 @@ function escapeHtml(value) {
 
 function escapeAttribute(value) {
   return escapeHtml(value);
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
 }
