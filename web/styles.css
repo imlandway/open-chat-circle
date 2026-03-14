@@ -604,20 +604,17 @@ input[type="password"]:focus {
 
 .chat-resizer {
   margin-top: auto;
-  height: 16px;
+  height: 6px;
   cursor: row-resize;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
+  flex-shrink: 0;
 }
 
 .chat-resizer::before {
-  content: "";
-  width: 52px;
-  height: 4px;
-  border-radius: 999px;
-  background: #d0d0d0;
+  content: none;
 }
 
 .message-row {
@@ -711,10 +708,10 @@ input[type="password"]:focus {
   grid-template-columns: 1fr auto auto;
   gap: 10px;
   align-items: center;
-  padding: 14px 20px 18px;
+  padding: 10px 20px 18px;
   background: rgba(247, 246, 243, 0.78);
   width: 100%;
-  border-top: 1px solid rgba(17, 17, 17, 0.04);
+  border-top: 0;
   box-shadow: none;
 }
 

@@ -569,7 +569,7 @@ function applyChatHeight() {
   const panelHeight = chatPanel.getBoundingClientRect().height;
   const headerHeight = chatPanel.querySelector('.chat-header')?.offsetHeight || 0;
   const composerHeight = messageForm.offsetHeight || 0;
-  const resizerHeight = chatResizer.offsetHeight || 16;
+  const resizerHeight = chatResizer.offsetHeight || 0;
   const maxHeight = Math.max(MIN_CHAT_LIST_HEIGHT, panelHeight - headerHeight - composerHeight - resizerHeight - 24);
   const nextHeight = clamp(state.chatListHeight, MIN_CHAT_LIST_HEIGHT, maxHeight);
 
