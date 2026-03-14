@@ -1021,10 +1021,134 @@ test('group assistant targeting prefers mentioned codex and defaults to deepseek
   assert.deepEqual(codexTargets.map((assistant) => assistant.kind), ['codex']);
 
   const deepseekTargets = await aiService.resolveMessageAssistants(group.id, '你们来评价一下这个群名');
-  assert.deepEqual(deepseekTargets.map((assistant) => assistant.kind), ['deepseek']);
+  assert.deepEqual(deepseekTargets.map((assistant) => assistant.kind).sort(), ['codex', 'deepseek']);
 
   const bothTargets = await aiService.resolveMessageAssistants(group.id, '@codex 和 @deepseek 都说一下');
   assert.deepEqual(bothTargets.map((assistant) => assistant.kind).sort(), ['codex', 'deepseek']);
+
+  await rm(dataDir, { recursive: true, force: true });
+});
+
+test('group assistant targeting can proactively choose codex, deepseek, or both by message intent', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
+  const store = new JsonStore(dataDir);
+  const sessionService = new SessionService('test-secret');
+  const authService = new AuthService(store, sessionService);
+  const socialService = new SocialService(store);
+  const chatService = new ChatService(store);
+  const aiService = new AiService({
+    store,
+    authService,
+    chatService,
+    realtimeHub: {
+      broadcastUsers() {},
+    },
+    config: {
+      openaiApiKey: 'test-key',
+      openaiModel: 'gpt-test',
+      aiAgentToken: 'agent-token',
+    },
+  });
+
+  await authService.ensureSeedAdmin();
+  await store.write('invites', [
+    {
+      id: 'invite_test',
+      code: 'TEST-OPEN',
+      createdBy: 'user_admin',
+      maxUses: 10,
+      usedCount: 0,
+      expiresAt: '2027-01-01T00:00:00.000Z',
+      status: 'active',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    },
+  ]);
+
+  const admin = await authService.getUserById('user_admin');
+  const friend = await authService.registerWithInvite({
+    inviteCode: 'TEST-OPEN',
+    nickname: 'Bob',
+    password: 'password123',
+  });
+  await socialService.addFriend(admin.id, { userId: friend.user.id });
+
+  const codex = await aiService.getAssistantUser('codex');
+  const deepseek = await aiService.getAssistantUser('deepseek');
+  const group = await chatService.createGroupConversation(admin.id, {
+    name: 'AI Group',
+    memberIds: [friend.user.id, codex.id, deepseek.id],
+  });
+
+  const codexTargets = await aiService.resolveMessageAssistants(group.id, '帮我在桌面建个文件夹然后跑一下测试');
+  assert.deepEqual(codexTargets.map((assistant) => assistant.kind), ['codex']);
+
+  const deepseekTargets = await aiService.resolveMessageAssistants(group.id, '帮我登录网站看一下交互并给修改建议');
+  assert.deepEqual(deepseekTargets.map((assistant) => assistant.kind), ['deepseek']);
+
+  const bothTargets = await aiService.resolveMessageAssistants(group.id, '你们两个都评价一下这个方案');
+  assert.deepEqual(bothTargets.map((assistant) => assistant.kind).sort(), ['codex', 'deepseek']);
+
+  await rm(dataDir, { recursive: true, force: true });
+});
+
+test('assistant follow-up targeting notices direct peer mentions in groups', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
+  const store = new JsonStore(dataDir);
+  const sessionService = new SessionService('test-secret');
+  const authService = new AuthService(store, sessionService);
+  const socialService = new SocialService(store);
+  const chatService = new ChatService(store);
+  const aiService = new AiService({
+    store,
+    authService,
+    chatService,
+    realtimeHub: {
+      broadcastUsers() {},
+    },
+    config: {
+      openaiApiKey: 'test-key',
+      openaiModel: 'gpt-test',
+      aiAgentToken: 'agent-token',
+    },
+  });
+
+  await authService.ensureSeedAdmin();
+  await store.write('invites', [
+    {
+      id: 'invite_test',
+      code: 'TEST-OPEN',
+      createdBy: 'user_admin',
+      maxUses: 10,
+      usedCount: 0,
+      expiresAt: '2027-01-01T00:00:00.000Z',
+      status: 'active',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    },
+  ]);
+
+  const admin = await authService.getUserById('user_admin');
+  const friend = await authService.registerWithInvite({
+    inviteCode: 'TEST-OPEN',
+    nickname: 'Bob',
+    password: 'password123',
+  });
+  await socialService.addFriend(admin.id, { userId: friend.user.id });
+
+  const codex = await aiService.getAssistantUser('codex');
+  const deepseek = await aiService.getAssistantUser('deepseek');
+  const group = await chatService.createGroupConversation(admin.id, {
+    name: 'AI Group',
+    memberIds: [friend.user.id, codex.id, deepseek.id],
+  });
+
+  const followUpToCodex = await aiService.resolveFollowUpAssistant(group.id, deepseek.id, '@codex 你来补充一下实现细节');
+  assert.equal(followUpToCodex?.kind, 'codex');
+
+  const followUpToDeepseek = await aiService.resolveFollowUpAssistant(group.id, codex.id, '@deepseek 你也评价一下这个方案');
+  assert.equal(followUpToDeepseek?.kind, 'deepseek');
+
+  const noFollowUp = await aiService.resolveFollowUpAssistant(group.id, codex.id, '我已经说完了');
+  assert.equal(noFollowUp, null);
 
   await rm(dataDir, { recursive: true, force: true });
 });

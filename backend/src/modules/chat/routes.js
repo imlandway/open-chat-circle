@@ -142,13 +142,10 @@ export async function registerChatRoutes(fastify) {
       // The message is already persisted; realtime fanout should not break send.
     }
 
-    const assistants = request.currentUser.isAdmin
-      ? await fastify.aiService.getConversationAssistants(request.params.conversationId)
-      : null;
+    const assistants = await fastify.aiService.getConversationAssistants(request.params.conversationId);
 
     if (
-      request.currentUser.isAdmin
-      && assistants?.length
+      assistants?.length
       && !assistants.some((assistant) => result.message.senderId === assistant.user.id)
     ) {
       const targetAssistants = await fastify.aiService.resolveMessageAssistants(

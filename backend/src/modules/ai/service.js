@@ -176,6 +176,8 @@ function buildLocalAgentPrompt(assistantName = 'Codex') {
   return [
     `You are ${assistantName} inside Open Chat Circle.`,
     'You are helping the admin operate their own Windows computer through a trusted local agent.',
+    'In group chats, speak up proactively when a message is clearly about coding, local computer work, files, commands, testing, deployment, or implementation details.',
+    'If another assistant directly mentions you in a group chat, you may answer briefly and directly.',
     'Default to action, not discussion.',
     'Use tools whenever the user asks you to inspect files, run commands, edit code, or control the browser.',
     'Prefer fs_list, fs_read, and fs_search for file inspection tasks.',
@@ -194,6 +196,8 @@ function buildCloudAssistantPrompt(assistantName = 'DeepSeek') {
   return [
     `You are ${assistantName} inside Open Chat Circle.`,
     'You are a concise, helpful chat assistant for normal conversation, group discussion, and website assistance.',
+    'In group chats, speak up proactively when a message is about websites, product feedback, summaries, brainstorming, naming, or general discussion.',
+    'If another assistant directly mentions you in a group chat, you may answer briefly and continue the discussion.',
     'You may use browser automation to open websites, click, type, log in, and capture screenshots when the user explicitly asks.',
     'You may use credentials that the user directly provides in the current chat for website login tasks.',
     'Do not claim you can control the user\'s local files, local terminal, or Windows desktop outside the browser session.',
@@ -231,6 +235,35 @@ function buildCodexConversationalReply(text) {
   }
 
   return '我在。直接告诉我你想让我做什么。';
+}
+
+const GROUP_BROADCAST_PATTERNS = [
+  /你们/,
+  /你俩/,
+  /两个ai/i,
+  /两位ai/i,
+  /机器人/,
+  /都说/,
+  /一起/,
+  /分别/,
+  /都评价/,
+  /都聊聊/,
+];
+
+const CODEX_ROLE_PATTERNS = [
+  /代码|编程|开发|bug|修复|项目|仓库|repo|git|命令|终端|powershell|shell|测试|部署|运行|脚本|文件|文件夹|目录|桌面|本地|电脑|程序|页面改动|实现|重构/i,
+];
+
+const DEEPSEEK_ROLE_PATTERNS = [
+  /网站|网页|登录|浏览器|截图|文案|产品|交互|体验|建议|分析|总结|方案|想法|评价|群名|讨论|聊天|回复|介绍|推荐/i,
+];
+
+function matchesAnyPattern(text, patterns) {
+  return patterns.some((pattern) => pattern.test(text));
+}
+
+function normalizeAssistantMentionTarget(text = '') {
+  return String(text || '').trim().toLowerCase();
 }
 
 function normalizeAssistantText(text) {
@@ -665,7 +698,7 @@ export class AiService {
       return [];
     }
 
-    const normalizedText = String(messageText || '').trim().toLowerCase();
+    const normalizedText = normalizeAssistantMentionTarget(messageText);
     if (!normalizedText) {
       const defaultAssistant = assistants.find((assistant) => assistant.kind === 'deepseek') || assistants[0];
       return defaultAssistant ? [defaultAssistant] : [];
@@ -686,8 +719,63 @@ export class AiService {
       return matchedAssistants;
     }
 
+    if (assistants.length > 1 && matchesAnyPattern(normalizedText, GROUP_BROADCAST_PATTERNS)) {
+      return assistants;
+    }
+
+    const codex = assistants.find((assistant) => assistant.kind === 'codex') || null;
+    const deepseek = assistants.find((assistant) => assistant.kind === 'deepseek') || null;
+    const normalizedInstruction = normalizeConversationInstruction(messageText);
+    const needsCodex = codex && matchesAnyPattern(normalizedInstruction, CODEX_ROLE_PATTERNS);
+    const needsDeepseek = deepseek && matchesAnyPattern(normalizedInstruction, DEEPSEEK_ROLE_PATTERNS);
+
+    if (needsCodex && needsDeepseek) {
+      return [codex, deepseek].filter(Boolean);
+    }
+
+    if (needsCodex) {
+      return [codex];
+    }
+
+    if (needsDeepseek) {
+      return [deepseek];
+    }
+
     const defaultAssistant = assistants.find((assistant) => assistant.kind === 'deepseek') || assistants[0];
     return defaultAssistant ? [defaultAssistant] : [];
+  }
+
+  async resolveFollowUpAssistant(conversationId, sourceAssistantUserId, messageText = '') {
+    const assistants = await this.getConversationAssistants(conversationId);
+    if (assistants.length < 2) {
+      return null;
+    }
+
+    const normalizedText = normalizeAssistantMentionTarget(messageText);
+    if (!normalizedText) {
+      return null;
+    }
+
+    const sourceAssistant = assistants.find((assistant) => assistant.user.id === sourceAssistantUserId) || null;
+    const peers = assistants.filter((assistant) => assistant.user.id !== sourceAssistantUserId);
+    if (!sourceAssistant || peers.length === 0) {
+      return null;
+    }
+
+    for (const peer of peers) {
+      const account = normalizeAssistantMentionTarget(peer.account);
+      const nickname = normalizeAssistantMentionTarget(peer.nickname);
+      if (
+        (account && normalizedText.includes(`@${account}`))
+        || (nickname && normalizedText.includes(`@${nickname}`))
+        || (account && normalizedText.includes(account))
+        || (nickname && normalizedText.includes(nickname))
+      ) {
+        return peer;
+      }
+    }
+
+    return null;
   }
 
   isAgentTokenValid(token) {
@@ -750,7 +838,13 @@ export class AiService {
     return Boolean(await this.getConversationAssistant(conversationId));
   }
 
-  async enqueueConversationRun({ actorUserId, conversationId, triggerMessageId, assistantUserId = '' }) {
+  async enqueueConversationRun({
+    actorUserId,
+    conversationId,
+    triggerMessageId,
+    assistantUserId = '',
+    interactionDepth = 0,
+  }) {
     const assistant = assistantUserId
       ? await this.getAssistantProfileByUserId(assistantUserId)
       : await this.getConversationAssistant(conversationId);
@@ -767,6 +861,7 @@ export class AiService {
       startedAt: '',
       finishedAt: '',
       responseMessageIds: [],
+      interactionDepth,
     };
 
     await this.store.mutate(ASSISTANT_RUNS, (runs) => {
@@ -864,6 +959,7 @@ export class AiService {
             status: 'completed',
             responseMessageIds,
           });
+          await this.maybeEnqueueAssistantFollowUp(run, finalMessage);
           return;
         }
 
@@ -918,6 +1014,7 @@ export class AiService {
         status: 'completed',
         responseMessageIds: [message.id],
       });
+      await this.maybeEnqueueAssistantFollowUp(run, message);
       return;
     }
 
@@ -952,6 +1049,48 @@ export class AiService {
       error: relayResult.error || '',
       responseMessageIds,
     });
+
+    if (!relayResult.error) {
+      await this.maybeEnqueueAssistantFollowUp(run, finalMessage);
+    }
+  }
+
+  async maybeEnqueueAssistantFollowUp(run, message) {
+    if ((run.interactionDepth ?? 0) >= 1 || !message?.text) {
+      return;
+    }
+
+    const targetAssistant = await this.resolveFollowUpAssistant(
+      run.conversationId,
+      run.assistantUserId,
+      message.text,
+    );
+    if (!targetAssistant) {
+      return;
+    }
+
+    if (await this.wasAssistantAlreadyTargetedByTrigger(run, targetAssistant.user.id)) {
+      return;
+    }
+
+    await this.enqueueConversationRun({
+      actorUserId: run.requestedBy,
+      conversationId: run.conversationId,
+      triggerMessageId: message.id,
+      assistantUserId: targetAssistant.user.id,
+      interactionDepth: (run.interactionDepth ?? 0) + 1,
+    });
+  }
+
+  async wasAssistantAlreadyTargetedByTrigger(run, assistantUserId) {
+    const messages = await this.chatService.listMessages(run.requestedBy, run.conversationId, { limit: 40 });
+    const triggerMessage = messages.find((message) => message.id === run.triggerMessageId);
+    if (!triggerMessage || triggerMessage.sender?.isAssistant) {
+      return false;
+    }
+
+    const targets = await this.resolveMessageAssistants(run.conversationId, triggerMessage.text || '');
+    return targets.some((assistant) => assistant.user.id === assistantUserId);
   }
 
   extractRelayInstruction(contextMessages) {
