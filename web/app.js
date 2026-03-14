@@ -70,6 +70,7 @@ const groupNameInput = document.querySelector('#group-name-input');
 const groupMemberList = document.querySelector('#group-member-list');
 const closeGroupBtn = document.querySelector('#close-group-btn');
 const avatarDialog = document.querySelector('#avatar-dialog');
+const avatarDialogTitle = document.querySelector('#avatar-dialog-title');
 const avatarCropStage = document.querySelector('#avatar-crop-stage');
 const avatarCropImage = document.querySelector('#avatar-crop-image');
 const closeAvatarBtn = document.querySelector('#close-avatar-btn');
@@ -258,7 +259,11 @@ function wireStaticEvents() {
     }
 
     try {
-      await updateGroupAvatar(file);
+      await openAvatarCropper(file, {
+        mode: 'group',
+        title: '裁剪群头像',
+        saveLabel: '保存群头像',
+      });
     } catch (error) {
       handleError(error);
     }
@@ -266,22 +271,7 @@ function wireStaticEvents() {
 
   saveAvatarBtn.addEventListener('click', async () => {
     try {
-      const file = await exportAvatarCrop();
-      const upload = await uploadImage(file);
-      const response = await api('/api/users/me', {
-        method: 'PATCH',
-        body: {
-          nickname: state.session.user.nickname,
-          account: state.session.user.account,
-          avatarUrl: upload.url,
-        },
-      });
-      state.session.user = response.user;
-      saveSession(state.session);
-      closeAvatarCropper();
-      await Promise.all([hydrateSideData(), hydrateConversations()]);
-      render();
-      showToast('头像已更新');
+      await saveAvatarCrop();
     } catch (error) {
       handleError(error);
     }
@@ -314,6 +304,9 @@ function wireStaticEvents() {
 
 function createEmptyAvatarCropState() {
   return {
+    mode: 'user',
+    title: '裁剪头像',
+    saveLabel: '保存头像',
     fileName: '',
     objectUrl: '',
     image: null,
@@ -940,14 +933,6 @@ async function updateGroupConversationInfo(payload) {
   state.groupProfileConversation = response.conversation;
   renderGroupProfile();
   render();
-}
-
-async function updateGroupAvatar(file) {
-  const upload = await uploadImage(file);
-  await updateGroupConversationInfo({
-    avatarUrl: upload.url,
-  });
-  showToast('群头像已更新');
 }
 
 async function promptRenameGroup() {
@@ -2179,15 +2164,20 @@ async function submitImageMessage() {
   }
 }
 
-async function openAvatarCropper(file) {
+async function openAvatarCropper(file, options = {}) {
   const objectUrl = URL.createObjectURL(file);
   const image = await loadImage(objectUrl);
 
   state.avatarCrop = createEmptyAvatarCropState();
+  state.avatarCrop.mode = options.mode || 'user';
+  state.avatarCrop.title = options.title || '裁剪头像';
+  state.avatarCrop.saveLabel = options.saveLabel || '保存头像';
   state.avatarCrop.fileName = file.name || 'avatar.png';
   state.avatarCrop.objectUrl = objectUrl;
   state.avatarCrop.image = image;
 
+  avatarDialogTitle.textContent = state.avatarCrop.title;
+  saveAvatarBtn.textContent = state.avatarCrop.saveLabel;
   avatarCropImage.src = objectUrl;
   avatarDialog.showModal();
 
@@ -2318,6 +2308,8 @@ function resetAvatarCropper() {
   avatarCropImage.style.transform = '';
   avatarCropStage.classList.remove('dragging');
   state.avatarCrop = createEmptyAvatarCropState();
+  avatarDialogTitle.textContent = state.avatarCrop.title;
+  saveAvatarBtn.textContent = state.avatarCrop.saveLabel;
 }
 
 function initializeAvatarCrop() {
@@ -2552,6 +2544,48 @@ async function exportAvatarCrop() {
   }
 
   return new File([blob], normalizeAvatarFileName(state.avatarCrop.fileName), { type: 'image/png' });
+}
+
+async function saveAvatarCrop() {
+  const file = await exportAvatarCrop();
+  if (state.avatarCrop.mode === 'group') {
+    await persistGroupAvatarCrop(file);
+    return;
+  }
+
+  await persistUserAvatarCrop(file);
+}
+
+async function persistUserAvatarCrop(file) {
+  const upload = await uploadImage(file);
+  const response = await api('/api/users/me', {
+    method: 'PATCH',
+    body: {
+      nickname: state.session.user.nickname,
+      account: state.session.user.account,
+      avatarUrl: upload.url,
+    },
+  });
+  state.session.user = response.user;
+  saveSession(state.session);
+  closeAvatarCropper();
+  await Promise.all([hydrateSideData(), hydrateConversations()]);
+  render();
+  showToast('头像已更新');
+}
+
+async function persistGroupAvatarCrop(file) {
+  const conversation = state.groupProfileConversation;
+  if (!conversation?.id) {
+    throw new Error('当前没有可编辑的群聊');
+  }
+
+  const upload = await uploadImage(file);
+  await updateGroupConversationInfo({
+    avatarUrl: upload.url,
+  });
+  closeAvatarCropper();
+  showToast('群头像已更新');
 }
 
 function normalizeAvatarFileName(fileName) {

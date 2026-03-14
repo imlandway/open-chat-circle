@@ -819,6 +819,10 @@ dialog::backdrop {
   gap: 10px;
 }
 
+#avatar-dialog .dialog-form {
+  min-width: min(520px, calc(100vw - 32px));
+}
+
 #avatar-view-dialog {
   width: min(720px, calc(100vw - 32px));
   background: rgba(248, 247, 244, 0.96);
