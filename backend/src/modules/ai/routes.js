@@ -46,11 +46,13 @@ export async function registerAiRoutes(fastify) {
   fastify.get('/ws/agent', { websocket: true }, async (connection, request) => {
     const token = getAgentTokenFromRequest(request);
     if (!fastify.aiService.isAgentTokenValid(token)) {
+      fastify.log.warn('Rejecting agent websocket connection because the token is invalid.');
       connection.socket.close(4001, 'Invalid agent token');
       return;
     }
 
     const session = await fastify.aiService.openAgentSession(connection.socket);
+    fastify.log.info({ sessionId: session.id }, 'Agent websocket connected.');
     connection.socket.send(JSON.stringify({
       type: 'agent.ready',
       payload: {
@@ -76,6 +78,7 @@ export async function registerAiRoutes(fastify) {
     });
 
     const close = () => {
+      fastify.log.info({ sessionId: session.id }, 'Agent websocket disconnected.');
       fastify.aiService.closeAgentSession(session.id).catch(() => undefined);
     };
 

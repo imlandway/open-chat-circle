@@ -126,6 +126,11 @@ async function main() {
         return;
       }
 
+      if (message?.type === 'agent.error') {
+        console.error(`Agent server error: ${message.payload?.message || 'unknown error'}`);
+        return;
+      }
+
       if (message?.type !== 'agent.job' || !message.payload) {
         return;
       }
@@ -184,9 +189,10 @@ async function main() {
       }
     }, 15000);
 
-    ws.on('close', () => {
+    ws.on('close', (code, reasonBuffer) => {
       clearInterval(heartbeat);
-      console.log('Agent disconnected. Reconnecting in 3s...');
+      const reason = reasonBuffer?.toString?.() || '';
+      console.log(`Agent disconnected (code=${code}${reason ? `, reason=${reason}` : ''}). Reconnecting in 3s...`);
       setTimeout(connect, 3000);
     });
 
