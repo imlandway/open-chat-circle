@@ -542,3 +542,64 @@ test('assistant runs stay serialized per conversation', async () => {
 
   await rm(dataDir, { recursive: true, force: true });
 });
+
+test('assistant treats read-only shell inspection commands as approval-free', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
+  const store = new JsonStore(dataDir);
+  const sessionService = new SessionService('test-secret');
+  const authService = new AuthService(store, sessionService);
+  const chatService = new ChatService(store);
+  const aiService = new AiService({
+    store,
+    authService,
+    chatService,
+    realtimeHub: {
+      broadcastUsers() {},
+    },
+    config: {
+      openaiApiKey: 'test-key',
+      openaiModel: 'gpt-test',
+      aiAssistantAccount: 'codex',
+      aiAssistantNickname: 'AI 助手',
+      aiAgentToken: 'agent-token',
+    },
+  });
+
+  let capturedJob = null;
+  aiService.requestAgentJob = async (payload) => {
+    capturedJob = payload;
+    return {
+      type: 'text',
+      text: 'ok',
+    };
+  };
+
+  await aiService.executeToolCall(
+    { id: 'run_1', conversationId: 'conversation_1' },
+    {
+      name: 'shell_run',
+      callId: 'call_1',
+      arguments: JSON.stringify({
+        command: 'Get-ChildItem',
+      }),
+    },
+  );
+
+  assert.equal(capturedJob.toolName, 'shell_run');
+  assert.equal(capturedJob.requiresApproval, false);
+
+  await aiService.executeToolCall(
+    { id: 'run_1', conversationId: 'conversation_1' },
+    {
+      name: 'shell_run',
+      callId: 'call_2',
+      arguments: JSON.stringify({
+        command: 'Remove-Item .\\temp.txt',
+      }),
+    },
+  );
+
+  assert.equal(capturedJob.requiresApproval, true);
+
+  await rm(dataDir, { recursive: true, force: true });
+});

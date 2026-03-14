@@ -76,7 +76,7 @@ const TOOL_DEFINITIONS = [
   {
     type: 'function',
     name: 'shell_run',
-    description: 'Run a PowerShell command inside an allowed working directory.',
+    description: 'Run a PowerShell command inside an allowed working directory. Use this for explicit shell tasks, not for basic file listing, reading, or searching.',
     parameters: {
       type: 'object',
       properties: {
@@ -143,6 +143,15 @@ const TOOL_DEFINITIONS = [
   },
 ];
 
+const SAFE_SHELL_INSPECTION_COMMANDS = [
+  /^(get-childitem|gci|dir|ls)\b/i,
+  /^(get-location|pwd)\b/i,
+  /^(get-content|gc|type|cat)\b/i,
+  /^(select-string|sls|findstr)\b/i,
+];
+
+const SHELL_RISKY_TOKENS = [';', '&&', '||', '|', '>', '<'];
+
 function parseToolArguments(rawArguments) {
   if (!rawArguments) {
     return {};
@@ -163,11 +172,30 @@ function buildSystemPrompt() {
     'You are Codex inside Open Chat Circle.',
     'You are helping the admin operate their own Windows computer through a trusted local agent.',
     'Use tools whenever the user asks you to inspect files, run commands, edit code, or control the browser.',
+    'Prefer fs_list, fs_read, and fs_search for file inspection tasks.',
+    'Only use shell_run when the user explicitly wants to run a shell command or when the fs_* tools cannot complete the task.',
     'Do not claim actions completed unless a tool result confirms it.',
     'Be concise, collaborative, and practical.',
     'When a tool fails, explain what failed and what the user can do next.',
     'If you receive a screenshot tool result, summarize what is visible before continuing.',
   ].join(' ');
+}
+
+function shouldRequireToolApproval(toolName, argumentsPayload) {
+  if (toolName !== 'shell_run') {
+    return TOOL_APPROVALS[toolName];
+  }
+
+  const command = String(argumentsPayload?.command || '').trim();
+  if (!command) {
+    return true;
+  }
+
+  if (SHELL_RISKY_TOKENS.some((token) => command.includes(token))) {
+    return true;
+  }
+
+  return !SAFE_SHELL_INSPECTION_COMMANDS.some((pattern) => pattern.test(command));
 }
 
 function normalizeToolResult(result) {
@@ -727,13 +755,14 @@ export class AiService {
     const argumentsPayload = parseToolArguments(toolCall.arguments);
     assert(TOOL_APPROVALS[toolName] !== undefined, 400, `Unsupported tool: ${toolName}`);
 
+    const requiresApproval = shouldRequireToolApproval(toolName, argumentsPayload);
     return this.requestAgentJob({
       runId: run.id,
       conversationId: run.conversationId,
       toolName,
       argumentsPayload,
       callId: toolCall.callId,
-      requiresApproval: TOOL_APPROVALS[toolName],
+      requiresApproval,
     });
   }
 
