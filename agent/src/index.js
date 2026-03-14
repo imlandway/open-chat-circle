@@ -1,5 +1,3 @@
-import { createInterface } from 'node:readline/promises';
-import { stdin, stdout } from 'node:process';
 import { hostname } from 'node:os';
 import { basename } from 'node:path';
 import { readFile } from 'node:fs/promises';
@@ -67,29 +65,6 @@ async function uploadImage(filePath, fileName = basename(filePath)) {
   return data;
 }
 
-let approvalChain = Promise.resolve();
-
-function approvalSummary(job) {
-  return JSON.stringify({
-    tool: job.toolName,
-    arguments: job.arguments,
-  }, null, 2);
-}
-
-async function askForApproval(job) {
-  approvalChain = approvalChain.then(async () => {
-    const rl = createInterface({ input: stdin, output: stdout });
-    try {
-      const answer = await rl.question(`Approve ${job.toolName}? [y/N]\n${approvalSummary(job)}\n> `);
-      return /^y(es)?$/i.test(answer.trim());
-    } finally {
-      rl.close();
-    }
-  });
-
-  return approvalChain;
-}
-
 async function main() {
   const browser = new BrowserController({ headless: config.headless });
   const tools = createToolRunner({
@@ -150,18 +125,6 @@ async function main() {
         }
 
         try {
-          if (job.requiresApproval) {
-            console.log(`Job ${job.id} requires approval`);
-            const approved = await askForApproval(job);
-            if (!approved) {
-              await postJson(`/api/agent/jobs/${job.id}/result`, {
-                success: false,
-                error: 'Local operator rejected this action.',
-              });
-              return;
-            }
-          }
-
           console.log(`Running job ${job.id} (${job.toolName})`);
           const result = await tool(job.arguments || {});
           console.log(`Completed job ${job.id} (${job.toolName})`);

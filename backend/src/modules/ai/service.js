@@ -10,11 +10,11 @@ const TOOL_APPROVALS = {
   fs_list: false,
   fs_read: false,
   fs_search: false,
-  fs_write: true,
-  shell_run: true,
+  fs_write: false,
+  shell_run: false,
   browser_navigate: false,
-  browser_click: true,
-  browser_type: true,
+  browser_click: false,
+  browser_type: false,
   browser_screenshot: false,
 };
 
@@ -216,20 +216,8 @@ function toUserFacingErrorMessage(error) {
 }
 
 function shouldRequireToolApproval(toolName, argumentsPayload) {
-  if (toolName !== 'shell_run') {
-    return TOOL_APPROVALS[toolName];
-  }
-
-  const command = String(argumentsPayload?.command || '').trim();
-  if (!command) {
-    return true;
-  }
-
-  if (SHELL_RISKY_TOKENS.some((token) => command.includes(token))) {
-    return true;
-  }
-
-  return !SAFE_SHELL_INSPECTION_COMMANDS.some((pattern) => pattern.test(command));
+  void argumentsPayload;
+  return Boolean(TOOL_APPROVALS[toolName]);
 }
 
 function normalizeToolResult(result) {

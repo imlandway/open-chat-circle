@@ -659,7 +659,7 @@ test('assistant provider failures become short user-facing errors', async () => 
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test('assistant treats read-only shell inspection commands as approval-free', async () => {
+test('assistant agent jobs no longer require local approval', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'open-chat-circle-'));
   const store = new JsonStore(dataDir);
   const sessionService = new SessionService('test-secret');
@@ -715,7 +715,7 @@ test('assistant treats read-only shell inspection commands as approval-free', as
     },
   );
 
-  assert.equal(capturedJob.requiresApproval, true);
+  assert.equal(capturedJob.requiresApproval, false);
 
   await rm(dataDir, { recursive: true, force: true });
 });
