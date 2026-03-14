@@ -2183,6 +2183,7 @@ async function openAvatarCropper(file, options = {}) {
 
   avatarDialogTitle.textContent = state.avatarCrop.title;
   saveAvatarBtn.textContent = state.avatarCrop.saveLabel;
+  avatarCropStage.dataset.cropMode = isGroupCrop ? 'group' : 'user';
   avatarCropStage.style.setProperty('--crop-inset', `${state.avatarCrop.viewportInset}px`);
   avatarCropStage.style.setProperty('--crop-radius', `${state.avatarCrop.viewportRadius}px`);
   avatarCropImage.src = objectUrl;
@@ -2313,6 +2314,7 @@ function resetAvatarCropper() {
 
   avatarCropImage.removeAttribute('src');
   avatarCropImage.style.transform = '';
+  delete avatarCropStage.dataset.cropMode;
   avatarCropStage.style.removeProperty('--crop-inset');
   avatarCropStage.style.removeProperty('--crop-radius');
   avatarCropStage.classList.remove('dragging');

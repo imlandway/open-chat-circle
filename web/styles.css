@@ -773,6 +773,12 @@ dialog::backdrop {
   cursor: grab;
 }
 
+.avatar-crop-stage[data-crop-mode="group"] {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
 .avatar-crop-stage.dragging {
   cursor: grabbing;
 }
@@ -806,6 +812,10 @@ dialog::backdrop {
   border-radius: var(--crop-radius);
   box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.18);
   pointer-events: none;
+}
+
+.avatar-crop-stage[data-crop-mode="group"] .avatar-crop-mask::before {
+  display: none;
 }
 
 .avatar-crop-frame::before {
